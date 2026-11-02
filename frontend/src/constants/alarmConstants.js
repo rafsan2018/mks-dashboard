@@ -1,0 +1,58 @@
+/**
+ * alarmConstants.js
+ * Domain constants for alarm classification, visual styling, and label mapping.
+ */
+
+export const ALARM_TYPES = {
+  1: { label: 'Normal',          color: '#34d399', bg: 'rgba(52,211,153,0.1)',  border: 'rgba(52,211,153,0.2)'  },
+  2: { label: 'Warning',         color: '#fbbf24', bg: 'rgba(251,191,36,0.1)',  border: 'rgba(251,191,36,0.2)'  },
+  3: { label: 'Shutdown',        color: '#fb7185', bg: 'rgba(251,113,133,0.1)', border: 'rgba(251,113,133,0.2)' },
+  4: { label: 'Electrical Trip', color: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.2)' },
+};
+
+export const ALARM_LABELS = {
+  emergencyStop:      'Emergency Stop',
+  lowOilPressure:     'Low Oil Pressure',
+  highCoolantTemp:    'High Coolant Temperature',
+  lowCoolantTemp:     'Low Coolant Temperature',
+  underSpeed:         'Under Speed',
+  overSpeed:          'Over Speed',
+  genUnderFreq:       'Generator Under Frequency',
+  genOverFreq:        'Generator Over Frequency',
+  genLowVoltage:      'Generator Low Voltage',
+  genHighVoltage:     'Generator High Voltage',
+  batteryLowVoltage:  'Battery Low Voltage',
+  batteryHighVoltage: 'Battery High Voltage',
+  chargeAltFail:      'Charge Alternator Failure',
+  failToStart:        'Fail To Start',
+  failToStop:         'Fail To Stop',
+  genFailToClose:     'Generator Fail To Close',
+  mainsFailToClose:   'Mains Fail To Close',
+  oilPressureFault:   'Oil Pressure Sender Fault',
+  lossMagPickUp:      'Loss Of Magnetic Pick Up',
+  magPickUpOpen:      'Magnetic Pick Up Open Circuit',
+  genHighCurrent:     'Generator High Current',
+  lowFuelLevel:       'Low Fuel Level',
+  canEcuWarning:      'CAN ECU Warning',
+  canEcuShutdown:     'CAN ECU Shutdown',
+  canEcuDataFail:     'CAN ECU Data Fail',
+  lowOilLevelSwitch:  'Low Oil Level Switch',
+  highTempSwitch:     'High Temperature Switch',
+  lowFuelLevelSwitch: 'Low Fuel Level Switch',
+  expansionWatchdog:  'Expansion Unit Watchdog Alarm',
+  kwOverload:         'kW Overload Alarm',
+  negPhaseSeqCurrent: 'Negative Phase Sequence Current Alarm',
+  earthFaultTrip:     'Earth Fault Trip Alarm',
+  earthFault:         'Earth Fault',
+  genPhaseRotation:   'Generator Phase Rotation Alarm',
+  autoVoltSenseFail:  'Auto Voltage Sense Fail',
+  maintenanceAlarm:   'Maintenance Alarm',
+  loadingFreqAlarm:   'Loading Frequency Alarm',
+  loadingVoltAlarm:   'Loading Voltage Alarm',
+  genShortCircuit:    'Generator Short Circuit',
+  mainsHighCurrent:   'Mains High Current',
+  mainsEarthFault:    'Mains Earth Fault',
+  mainsShortCircuit:  'Mains Short Circuit',
+  ecuProtect:         'ECU Protect',
+  coolantSensorOpen:  'Coolant Sensor Open Circuit',
+};

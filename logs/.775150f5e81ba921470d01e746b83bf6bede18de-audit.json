@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "D:\\Elliance\\Modbas_register\\logs\\.775150f5e81ba921470d01e746b83bf6bede18de-audit.json",
+    "files": [
+        {
+            "date": 1793249119602,
+            "name": "D:\\Elliance\\Modbas_register\\logs\\error-2026-10-29.log",
+            "hash": "2ccbaf78187e060200f3d295d5c12b9a4472bd5651d92c3400dd7870aa252487"
+        }
+    ],
+    "hashType": "sha256"
+}

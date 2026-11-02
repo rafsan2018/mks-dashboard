@@ -1,0 +1,1 @@
+[2026-10-29 10:45:19] [ERROR]: Database query error: {"sql":"DESCRIBE Users","error":"Access denied for user 'root'@'localhost' (using password: NO)"}
