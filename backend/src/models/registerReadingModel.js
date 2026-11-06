@@ -185,6 +185,25 @@ class RegisterReadingModel {
   }
 
   /**
+   * Newest stored reading of each given register, from one readings table.
+   * Used by the threshold monitor (registers of one group share a table).
+   */
+  async findLatestValues(table, registerIds) {
+    if (!READING_TABLES.includes(table) || registerIds.length === 0) return [];
+
+    const [rows] = await db.query(
+      `SELECT rr.RegisterId, rr.ScaledValue, rr.RecordedAt
+       FROM ${table} rr
+       JOIN (SELECT RegisterId, MAX(ReadingId) AS ReadingId
+             FROM ${table}
+             WHERE RegisterId IN (?)
+             GROUP BY RegisterId) latest ON latest.ReadingId = rr.ReadingId`,
+      [registerIds]
+    );
+    return rows;
+  }
+
+  /**
    * Get latest reading for a specific register
    */
   async findLatestByRegister(registerId) {

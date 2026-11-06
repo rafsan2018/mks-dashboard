@@ -4,6 +4,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') }
 const app = require('./app');
 const { logger } = require('./utils/logger');
 const db = require('./config/database');
+const alertMonitorScheduler = require('./services/alertMonitorScheduler');
 
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -18,11 +19,14 @@ async function bootstrap() {
       logger.info(`🚀 Server running in ${NODE_ENV} mode on port ${PORT}`);
       logger.info(`📡 API Base URL: http://localhost:${PORT}${process.env.API_PREFIX || '/api/v1'}`);
       logger.info(`📋 Health check: http://localhost:${PORT}/health`);
+      // Threshold alert emails for the readings the BE service writes to the database
+      alertMonitorScheduler.start();
     });
 
     // Graceful shutdown
     const gracefulShutdown = async (signal) => {
       logger.info(`\n🔴 Received ${signal}. Shutting down gracefully...`);
+      alertMonitorScheduler.stop();
       server.close(async () => {
         try {
           await db.pool.end();

@@ -20,6 +20,7 @@ and a MySQL database.
 1. Copy `backend/.env.production.example` to `backend/.env.production` and fill in the real values:
    database login, SMTP mailbox, and `CORS_ORIGIN` = the dashboard address
    (`https://...`, no trailing slash). This file is git-ignored, so passwords stay out of git.
+   Also set `ALERT_MONITOR_TOKEN` to a long random text (see step 8, alert emails).
 2. From the project root, run:
 
    ```bash
@@ -35,6 +36,10 @@ and a MySQL database.
 **Already have the database** (the cloud MySQL the C# service uses)? Skip to step 3 and put
 its host and login in `.env.production`. If that MySQL is on a different server from the
 cPanel host, it must allow connections from the cPanel server's IP address.
+Make sure these migrations from `backend/migrations/` have been run on that database
+(in this order, each is safe to repeat), **before** the new dashboard and the new C# service go live:
+1. `2026-11-06-alert-recipients.sql`
+2. `2026-11-06-sms-settings.sql`
 
 **Starting fresh on this cPanel account:**
 1. cPanel → **MySQL Databases**: create a database and a user, then add the user to the
@@ -89,6 +94,30 @@ the three lines at the top of its `.htaccess`.
 1. Open `https://mks-api.elliancesystem.com/health` → you should see `"status":"healthy"`.
 2. Open `https://mks.elliancesystem.com` → the login page loads and you can sign in.
 3. Settings → **Send test email** to confirm SMTP works.
+4. Open **SMS Alerts** → it loads the settings and the SMS log. If it says the migration has not been
+   run, the dashboard is connected to a different database from the one you migrated.
+
+## 8. Alert emails need a timer (cron)
+
+Threshold alert emails are sent by checking the newest readings every minute. The backend can do
+this itself (`ALERT_POLL_SECONDS=60`), but cPanel (Passenger) may stop an idle Node app, and then
+the timer stops with it. The reliable way is a cron job:
+
+1. In `~/mks-api/.env` set `ALERT_POLL_SECONDS=0` (no timer inside the app) and
+   `ALERT_MONITOR_TOKEN=<your long random text>`, then **Restart** the Node.js app.
+2. cPanel → **Cron Jobs** → add one that runs **every minute** (`* * * * *`):
+
+   ```
+   curl -s -X POST -H "x-monitor-token: YOUR_TOKEN" https://mks-api.elliancesystem.com/api/v1/alert-monitor/run > /dev/null
+   ```
+3. Test it once by hand. It should answer `"success":true` with `thresholds`, `checked` and `alerts`:
+
+   ```bash
+   curl -X POST -H "x-monitor-token: YOUR_TOKEN" https://mks-api.elliancesystem.com/api/v1/alert-monitor/run
+   ```
+
+A wrong token gives 403, and a missing `ALERT_MONITOR_TOKEN` switches the endpoint off (404).
+SMS alerts do not depend on this: they are sent on site by the C# service.
 
 ---
 
@@ -110,5 +139,7 @@ the three lines at the top of its `.htaccess`.
 | Browser console says **CORS** / "Not allowed by CORS" | `CORS_ORIGIN` in `~/mks-api/.env` does not exactly match the dashboard address (check `https`, `www`, no trailing `/`). Fix and **Restart**. |
 | Page refresh gives 404 | `.htaccess` missing from the dashboard's document root (step 4.3). |
 | Changes don't appear after an update | Hard-refresh the browser (Ctrl+F5). For the backend, make sure you clicked **Restart**. |
+| SMS Alerts page says the migration has not been run | `backend/migrations/2026-11-06-sms-settings.sql` was not run on the database the backend uses (check `DB_NAME` in `.env`). |
+| Alert emails never arrive | The timer is not running (step 8), SMTP is not set up (use Settings → Send test email), or nobody is selected for that threshold on the Alert Recipients page. |
 | "Too many requests" | Raise `RATE_LIMIT_MAX` in `.env` and **Restart**. Live readings are already exempt. |
 | Slow or "Resource limit reached" | The dashboard polls every second; shared hosting limits concurrent processes. Raise `POLL_INTERVAL` in `frontend/src/constants/pollConstants.js` (e.g. 5000), rebuild, re-upload. |

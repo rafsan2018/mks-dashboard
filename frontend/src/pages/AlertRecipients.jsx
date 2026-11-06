@@ -18,6 +18,7 @@ import {
 import { getThresholds } from '../api/thresholdService';
 import { getUsers } from '../api/userService';
 import { getAlertRecipients, saveAlertRecipients } from '../api/alertRecipientService';
+import { isSmsRegister, MAX_SMS_RECIPIENTS, SMS_REGISTER_NAMES } from '../constants/alertRules';
 
 /* ── Colours (same palette as Settings / Users) ── */
 const EMAIL_COLOR = '#38bdf8';
@@ -53,6 +54,8 @@ const normalizeThreshold = (t) => ({
   severity: t.Severity || 'Warning',
   alertsOn: isActiveFlag(t.SMSEnabled),
   isActive: isActiveFlag(t.IsActive),
+  // SMS is only sent for oil pressure, coolant temperature and fuel level; the rest is Email only
+  smsEligible: isSmsRegister(t.RegisterName),
 });
 
 const conditionText = (t) => {
@@ -133,11 +136,17 @@ const ThresholdItem = ({ threshold, recipients, selected, dirty, onSelect }) => 
         <span className="flex items-center gap-1" style={{ color: emailCount ? EMAIL_COLOR : '#6b7e99' }} title="Email recipients">
           <HiOutlineMail className="text-sm" /> {emailCount}
         </span>
-        <span className="flex items-center gap-1" style={{ color: smsCount ? SMS_COLOR : '#fbbf24' }} title="SMS recipients">
-          <HiOutlinePhone className="text-sm" /> {smsCount}
-        </span>
+        {threshold.smsEligible ? (
+          <span className="flex items-center gap-1" style={{ color: smsCount ? SMS_COLOR : '#fbbf24' }} title="SMS recipients">
+            <HiOutlinePhone className="text-sm" /> {smsCount}
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-dark-400" title="SMS is only sent for oil pressure, coolant temperature and fuel level">
+            <HiOutlinePhone className="text-sm" /> –
+          </span>
+        )}
         {!threshold.isActive && <span className="tag bg-rose-500/10 text-rose-400">Inactive</span>}
-        {threshold.isActive && !threshold.alertsOn && <span className="tag bg-slate-500/15 text-dark-200">Alerts off</span>}
+        {threshold.isActive && threshold.smsEligible && !threshold.alertsOn && <span className="tag bg-slate-500/15 text-dark-200">SMS off</span>}
         {dirty && (
           <span className="ml-auto flex items-center gap-1 text-amber-400" title="Unsaved changes">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Edited
@@ -223,8 +232,9 @@ const AlertRecipients = () => {
   const summary = useMemo(() => {
     const ids = thresholds.map((t) => t.id);
     const emailUsers = new Set(ids.flatMap((id) => draft[id]?.email || []));
-    const smsUsers = new Set(ids.flatMap((id) => draft[id]?.sms || []));
-    const noSms = ids.filter((id) => !(draft[id]?.sms || []).length).length;
+    const smsIds = thresholds.filter((t) => t.smsEligible).map((t) => t.id);
+    const smsUsers = new Set(smsIds.flatMap((id) => draft[id]?.sms || []));
+    const noSms = smsIds.filter((id) => !(draft[id]?.sms || []).length).length;
     return { thresholds: ids.length, emailUsers: emailUsers.size, smsUsers: smsUsers.size, noSms };
   }, [thresholds, draft]);
 
@@ -234,8 +244,11 @@ const AlertRecipients = () => {
     setDraft((prev) => ({ ...prev, [selected.id]: { ...prev[selected.id], [channel]: sortIds(nextIds) } }));
   };
 
+  const smsFull = current.sms.length >= MAX_SMS_RECIPIENTS;
+
   const toggleUser = (channel, userId) => {
     const list = current[channel];
+    if (channel === 'sms' && !list.includes(userId) && list.length >= MAX_SMS_RECIPIENTS) return;
     updateCurrent(channel, list.includes(userId) ? list.filter((id) => id !== userId) : [...list, userId]);
   };
 
@@ -243,7 +256,9 @@ const AlertRecipients = () => {
     const eligible = filteredUsers.filter(channel === 'email' ? canEmail : canSms).map((u) => u.UserId);
     const visible = new Set(filteredUsers.map((u) => u.UserId));
     const kept = current[channel].filter((id) => !visible.has(id));
-    updateCurrent(channel, on ? [...kept, ...eligible] : kept);
+    const next = on ? [...kept, ...eligible] : kept;
+    // At most 5 people receive an SMS
+    updateCurrent(channel, channel === 'sms' ? next.slice(0, MAX_SMS_RECIPIENTS) : next);
   };
 
   const copyToAll = () => {
@@ -251,10 +266,13 @@ const AlertRecipients = () => {
     const source = draft[selected.id];
     setDraft((prev) => {
       const next = { ...prev };
-      thresholds.forEach((t) => { next[t.id] = { email: [...source.email], sms: [...source.sms] }; });
+      // SMS only goes to the thresholds that send SMS; the others keep their Email list only
+      thresholds.forEach((t) => {
+        next[t.id] = { email: [...source.email], sms: t.smsEligible ? source.sms.slice(0, MAX_SMS_RECIPIENTS) : [] };
+      });
       return next;
     });
-    notify(`Copied to all ${plural(thresholds.length, 'threshold')}. Press Save changes to apply.`, 'info');
+    notify(`Copied to all ${plural(thresholds.length, 'threshold')}. SMS is only copied to the thresholds that send SMS. Press Save changes to apply.`, 'info');
   };
 
   const discard = () => setDraft(saved);
@@ -449,12 +467,20 @@ const AlertRecipients = () => {
                     </button>
                   </div>
 
-                  {(!selected.isActive || !selected.alertsOn) && (
+                  {!selected.isActive && (
                     <div className="flex items-start gap-2.5 p-3 rounded-xl text-xs bg-amber-500/10 border border-amber-500/30 text-amber-200">
                       <HiOutlineExclamation className="text-base text-amber-400 shrink-0 mt-0.5" />
                       <span>
-                        {!selected.isActive ? 'This threshold is inactive' : 'Alerts are switched off for this threshold'} on the Settings page,
-                        so no Email or SMS is sent until it is turned on. You can still choose the recipients now.
+                        This threshold is inactive on the Settings page, so no Email or SMS is sent until it is turned on.
+                        You can still choose the recipients now.
+                      </span>
+                    </div>
+                  )}
+                  {selected.isActive && selected.smsEligible && !selected.alertsOn && (
+                    <div className="flex items-start gap-2.5 p-3 rounded-xl text-xs bg-amber-500/10 border border-amber-500/30 text-amber-200">
+                      <HiOutlineExclamation className="text-base text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        The SMS switch of this threshold is off on the Settings page, so no SMS is sent (Email is not affected).
                       </span>
                     </div>
                   )}
@@ -468,24 +494,41 @@ const AlertRecipients = () => {
                       <p className="text-[11px] text-dark-300 mt-1">
                         {current.email.length > 0
                           ? users.filter((u) => current.email.includes(u.UserId)).map((u) => u.Username).join(', ')
-                          : 'Nobody selected, so the email goes to the user account that sends the readings.'}
+                          : 'Nobody selected, so no Email is sent for this threshold.'}
                       </p>
                     </div>
-                    <div
-                      className="p-3 rounded-xl"
-                      style={current.sms.length > 0
-                        ? { background: `${SMS_COLOR}0d`, border: `1px solid ${SMS_COLOR}33` }
-                        : { background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)' }}
-                    >
-                      <p className="flex items-center gap-1.5 text-xs font-bold" style={{ color: current.sms.length > 0 ? SMS_COLOR : '#fbbf24' }}>
-                        <HiOutlinePhone className="text-sm" /> SMS goes to {people(current.sms.length)}
-                      </p>
-                      <p className="text-[11px] text-dark-300 mt-1">
-                        {current.sms.length > 0
-                          ? users.filter((u) => current.sms.includes(u.UserId)).map((u) => u.Username).join(', ')
-                          : 'Nobody selected, so no SMS is sent for this threshold.'}
-                      </p>
-                    </div>
+                    {selected.smsEligible ? (
+                      <div
+                        className="p-3 rounded-xl"
+                        style={current.sms.length > 0
+                          ? { background: `${SMS_COLOR}0d`, border: `1px solid ${SMS_COLOR}33` }
+                          : { background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)' }}
+                      >
+                        <p className="flex items-center gap-1.5 text-xs font-bold" style={{ color: current.sms.length > 0 ? SMS_COLOR : '#fbbf24' }}>
+                          <HiOutlinePhone className="text-sm" /> SMS goes to {people(current.sms.length)}
+                          <span className="font-mono font-semibold text-dark-300">({current.sms.length}/{MAX_SMS_RECIPIENTS} max)</span>
+                        </p>
+                        <p className="text-[11px] text-dark-300 mt-1">
+                          {current.sms.length > 0
+                            ? users.filter((u) => current.sms.includes(u.UserId)).map((u) => u.Username).join(', ')
+                            : 'Nobody selected, so no SMS is sent for this threshold.'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl" style={{ background: 'rgba(107,114,128,0.08)', border: '1px solid rgba(107,114,128,0.25)' }}>
+                        <p className="flex items-center gap-1.5 text-xs font-bold text-dark-200">
+                          <HiOutlinePhone className="text-sm" /> No SMS for this threshold
+                        </p>
+                        <p className="text-[11px] text-dark-300 mt-1">
+                          SMS is only sent for {SMS_REGISTER_NAMES.join(', ')} and when the genset starts. This threshold sends Email.
+                        </p>
+                        {current.sms.length > 0 && (
+                          <p className="text-[11px] text-amber-300 mt-1.5">
+                            {plural(current.sms.length, 'old SMS recipient')} still linked. Switch {current.sms.length === 1 ? 'it' : 'them'} off in the SMS column before saving this threshold.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="relative w-full md:w-80">
@@ -525,7 +568,7 @@ const AlertRecipients = () => {
                             <button
                               type="button"
                               onClick={() => setAllVisible('sms', !allSmsOn)}
-                              disabled={smsVisibleEligible.length === 0}
+                              disabled={!selected.smsEligible || smsVisibleEligible.length === 0}
                               className="text-[10px] font-semibold px-2 py-0.5 rounded-md text-dark-200 hover:text-white bg-dark-700/60 hover:bg-dark-600 transition-colors disabled:opacity-40"
                             >
                               {allSmsOn ? 'Clear' : 'Select all'}
@@ -587,10 +630,15 @@ const AlertRecipients = () => {
                                 <Switch
                                   checked={smsOn}
                                   onChange={() => toggleUser('sms', u.UserId)}
-                                  disabled={!canSms(u) && !smsOn}
+                                  disabled={!selected.smsEligible ? !smsOn : (!canSms(u) && !smsOn) || (smsFull && !smsOn)}
                                   color={SMS_COLOR}
                                   label={`SMS alerts for ${u.Username}`}
-                                  title={canSms(u) ? undefined : 'No phone number on this user. Add one on the Users page.'}
+                                  title={
+                                    !selected.smsEligible ? 'SMS is not sent for this threshold'
+                                      : !canSms(u) ? 'No phone number on this user. Add one on the Users page.'
+                                        : (smsFull && !smsOn) ? `At most ${MAX_SMS_RECIPIENTS} people can receive the SMS`
+                                          : undefined
+                                  }
                                 />
                                 <span className={`text-xs font-mono truncate ${canSms(u) ? 'text-dark-100' : 'text-dark-400 italic font-sans'}`}>
                                   {canSms(u) ? u.PhoneNumber : 'No phone'}

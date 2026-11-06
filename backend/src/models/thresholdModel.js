@@ -112,6 +112,23 @@ class ThresholdModel {
   }
 
   /**
+   * Every active threshold with its register, group and status.
+   * Used by the monitor, which checks the newest stored reading of each register.
+   */
+  async findAllActiveForMonitor() {
+    const [rows] = await db.query(
+      `SELECT t.ThresholdId, t.RegisterId, t.MinValue, t.MaxValue,
+              t.Severity, t.SMSEnabled, t.IsActive,
+              rd.RegisterName, rd.Unit, rd.\`Group\` AS RegisterGroup, rd.Status AS RegisterStatus
+       FROM Thresholds t
+       JOIN RegisterDefinitions rd ON t.RegisterId = rd.RegisterId
+       WHERE t.IsActive = 1
+       ORDER BY t.ThresholdId ASC`
+    );
+    return rows.map(row => this._format(row));
+  }
+
+  /**
    * Create a new threshold
    */
   async create({ registerId, minValue = null, maxValue = null, severity = 'Warning', smsEnabled = 1, isActive = 1 }) {

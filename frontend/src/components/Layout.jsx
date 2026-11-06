@@ -31,6 +31,7 @@ const navItems = [
   { path: '/dpm', label: 'DPM', icon: MdOutlineElectricMeter, accent: '#0ea5e9' },
   { path: '/settings', label: 'Settings', icon: HiOutlineCog, accent: '#10b981' },
   { path: '/recipients', label: 'Alert Recipients', icon: HiOutlineSpeakerphone, accent: '#06b6d4' },
+  { path: '/sms-alerts', label: 'SMS Alerts', icon: HiOutlinePhone, accent: '#34d399' },
   { path: '/users', label: 'Users', icon: HiOutlineUserGroup, accent: '#8b5cf6' },
 ];
 
@@ -40,6 +41,7 @@ const pageTitles = {
   '/dpm': { title: 'Digital Power Meter', subtitle: 'ME631 — Register groups per Modbus manual' },
   '/settings': { title: 'Settings', subtitle: 'System configuration & threshold alerts' },
   '/recipients': { title: 'Alert Recipients', subtitle: 'Who receives Email and SMS alerts' },
+  '/sms-alerts': { title: 'SMS Alerts', subtitle: 'SMS settings, genset start message and SMS log' },
   '/users': { title: 'User Management', subtitle: 'Access control and user accounts' },
   '/profile': { title: 'User Profile', subtitle: 'Manage your account details and security credentials' },
 };

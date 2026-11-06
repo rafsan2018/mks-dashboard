@@ -19,6 +19,55 @@ describe('AlertRecipientService.saveRecipients', () => {
     alertRecipientModel.findUsersByIds.mockImplementation(async (ids) => USERS.filter(u => ids.includes(u.UserId)));
     alertRecipientModel.replaceMany.mockResolvedValue({ emailCount: 0, smsCount: 0 });
     alertRecipientModel.findAll.mockResolvedValue([]);
+    // Thresholds 1 to 5 are on registers that send SMS, 6 is not
+    alertRecipientModel.findRegisterNames.mockImplementation(async (ids) => Object.fromEntries(
+      ids.map(id => [id, id === 6 ? 'Phase 1 Power Factor' : 'Oil Pressure'])
+    ));
+  });
+
+  test('rejects SMS recipients on a threshold whose register does not send SMS', async () => {
+    await expect(alertRecipientService.saveRecipients([
+      { thresholdId: 6, emailUserIds: [1], smsUserIds: [1] },
+    ])).rejects.toMatchObject({
+      statusCode: 422,
+      errors: [expect.objectContaining({ field: 'smsUserIds', value: 6 })],
+    });
+    expect(alertRecipientModel.replaceMany).not.toHaveBeenCalled();
+  });
+
+  test('still allows Email recipients on a register that does not send SMS', async () => {
+    await alertRecipientService.saveRecipients([
+      { thresholdId: 6, emailUserIds: [1, 2], smsUserIds: [] },
+    ]);
+
+    expect(alertRecipientModel.replaceMany).toHaveBeenCalledWith([
+      { thresholdId: 6, emailUserIds: [1, 2], smsUserIds: [] },
+    ]);
+  });
+
+  test('rejects more than 5 SMS recipients for one threshold', async () => {
+    alertRecipientModel.findUsersByIds.mockImplementation(async (ids) => ids.map(id => (
+      { UserId: id, Username: `user${id}`, Email: `u${id}@example.com`, PhoneNumber: '+60123456789', IsActive: 1 }
+    )));
+
+    await expect(alertRecipientService.saveRecipients([
+      { thresholdId: 1, emailUserIds: [], smsUserIds: [1, 2, 3, 4, 5, 6] },
+    ])).rejects.toMatchObject({
+      statusCode: 422,
+      errors: [expect.objectContaining({ field: 'smsUserIds', value: 1 })],
+    });
+  });
+
+  test('accepts exactly 5 SMS recipients', async () => {
+    alertRecipientModel.findUsersByIds.mockImplementation(async (ids) => ids.map(id => (
+      { UserId: id, Username: `user${id}`, Email: `u${id}@example.com`, PhoneNumber: '+60123456789', IsActive: 1 }
+    )));
+
+    await alertRecipientService.saveRecipients([
+      { thresholdId: 1, emailUserIds: [], smsUserIds: [1, 2, 3, 4, 5] },
+    ]);
+
+    expect(alertRecipientModel.replaceMany).toHaveBeenCalled();
   });
 
   test('replaces both lists, removing duplicate user IDs', async () => {

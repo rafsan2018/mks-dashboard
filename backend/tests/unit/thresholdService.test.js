@@ -69,6 +69,33 @@ describe('ThresholdService - CRUD Operations', () => {
     ).rejects.toThrow(NotFoundError);
   });
 
+  test('createThreshold keeps the SMS switch on for oil pressure, coolant temperature and fuel level', async () => {
+    registerDefinitionModel.findById.mockResolvedValue({ RegisterId: 1, RegisterName: 'Oil Pressure' });
+    thresholdModel.create.mockResolvedValue({ ThresholdId: 1 });
+
+    await thresholdService.createThreshold({ registerId: 1, minValue: 100, smsEnabled: 1 });
+
+    expect(thresholdModel.create).toHaveBeenCalledWith(expect.objectContaining({ smsEnabled: 1 }));
+  });
+
+  test('createThreshold switches SMS off for any other register (Email only)', async () => {
+    registerDefinitionModel.findById.mockResolvedValue({ RegisterId: 9, RegisterName: 'Phase 1 Power Factor' });
+    thresholdModel.create.mockResolvedValue({ ThresholdId: 2 });
+
+    await thresholdService.createThreshold({ registerId: 9, minValue: 0.8, smsEnabled: 1 });
+
+    expect(thresholdModel.create).toHaveBeenCalledWith(expect.objectContaining({ smsEnabled: 0 }));
+  });
+
+  test('updateThreshold refuses to switch SMS on for a register that does not send SMS', async () => {
+    thresholdModel.findById.mockResolvedValue({ ThresholdId: 3, RegisterName: 'Generator L1 Current', MinValue: null, MaxValue: 50 });
+    thresholdModel.update.mockResolvedValue({ ThresholdId: 3 });
+
+    await thresholdService.updateThreshold(3, { smsEnabled: 1 });
+
+    expect(thresholdModel.update).toHaveBeenCalledWith(3, { smsEnabled: 0 });
+  });
+
   test('updateThreshold updates values correctly', async () => {
     thresholdModel.findById.mockResolvedValue({ ThresholdId: 1, MinValue: 100, MaxValue: 200 });
     thresholdModel.update.mockResolvedValue({ ThresholdId: 1, MinValue: 150, MaxValue: 200 });

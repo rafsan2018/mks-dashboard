@@ -115,17 +115,37 @@ For SMTP port `465`, set `SMTP_SECURE=true`; for port `587`, set
 `SMTP_SECURE=false`. If the setting is omitted, port 465 automatically uses TLS.
 Keep SMTP credentials only in the backend environment, never in source files.
 
-### Threshold email alerts
-The backend evaluates active thresholds when each reading is stored
-(`POST /api/v1/readings` and `POST /api/v1/readings/bulk`) and, when the threshold's
-SMS Alert setting is enabled, emails every active user selected for that threshold on
-the **Alert Recipients** page (table `ThresholdEmailNotifyUsers`). If nobody is
-selected for a threshold, it falls back to the profile in the `X-User-Id` header.
-SMS (WhatsApp) recipients are stored in `ThresholdNotifyUsers` and sent by the C# BE
-service. Create both tables with `migrations/2026-11-06-alert-recipients.sql`. Repeated readings during the same
-violation do not resend; the alert becomes eligible again after the reading returns
-within range. Configure SMTP as above. The database schema includes
-`ThresholdAlertStates`; apply the schema update before deploying this change.
+### Email and SMS alerts
+Two separate channels:
+
+| Channel | Which thresholds | Sent by | Recipients |
+|---|---|---|---|
+| **Email** | Every active threshold | This backend | `ThresholdEmailNotifyUsers` |
+| **SMS** | Oil Pressure, Coolant Temperature, Fuel Level, and "genset started" | The C# BE service on site, through the SIM card of the EG628 | `ThresholdNotifyUsers` (max 5 per threshold), `AlertEventRecipients` for "genset started" |
+
+**Email.** An active threshold emails every active user selected for it on the **Alert
+Recipients** page. It does not depend on the SMS switch. The check runs in two ways:
+- on every reading posted to the API (`POST /api/v1/readings` and `/readings/bulk`), and
+- on a timer, on the newest stored reading of every active threshold
+  (`ALERT_POLL_SECONDS`, default 60). The C# BE service writes readings straight to the
+  database, so this is what sends the emails for real data. Hosting that stops idle Node
+  apps can set `ALERT_POLL_SECONDS=0` and call `POST /api/v1/alert-monitor/run` from a cron
+  job with the header `x-monitor-token: <ALERT_MONITOR_TOKEN>`.
+
+Repeated readings during the same violation do not resend; the alert becomes eligible
+again after the value has been back within range. Configure SMTP as above. The database
+schema includes `ThresholdAlertStates`; apply the schema update before deploying this change.
+
+**SMS.** Settings (on/off, reminder and retry time, site name, the "genset started" text and
+who receives it) are edited on the dashboard, **SMS Alerts** page, and stored in
+`AlertSettings` / `AlertEventRecipients`. The C# BE service copies them to its local
+database every 5 minutes. Every SMS it sends is logged in `SmsAlertLog` (shown on the same page).
+SMS can only be switched on for the registers listed in `src/utils/alertRules.js`.
+
+**Database migrations, in this order** (safe to run more than once):
+1. `migrations/2026-11-06-alert-recipients.sql`: the two recipient tables.
+2. `migrations/2026-11-06-sms-settings.sql`: SMS settings, "genset started" recipients, SMS log columns,
+   and switches SMS off for thresholds of other registers. **Run it before deploying the new C# BE service.**
 
 To verify SMTP delivery, send `POST /api/v1/auth/test-email` with `{"userId": 4}`.
 The test message is sent to that profile's current email; no recipient address is
@@ -448,7 +468,49 @@ Who receives Email and SMS alerts for each threshold.
 }
 ```
 Users on `emailUserIds` must have an email and users on `smsUserIds` a phone number (422 otherwise).
+`smsUserIds` is only allowed on thresholds of Oil Pressure, Coolant Temperature and Fuel Level, with at most
+5 users (422 otherwise). `GET` returns `SmsEligible` and `SmsMax` for each threshold.
 Inactive users can stay selected but receive nothing until they are active again.
+
+---
+
+### 8. SMS Settings API (`/api/v1/alert-settings`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/alert-settings` | `settings`, `gensetStartUserIds` and the `rules` the page shows |
+| `PUT` | `/api/v1/alert-settings` | Save any of the settings and/or the "genset started" recipients |
+
+**Save Body** (every field is optional):
+```json
+{
+  "settings": {
+    "smsEnabled": true,
+    "siteName": "Genset Room",
+    "reminderMinutes": 30,
+    "retryMinutes": 1,
+    "gensetStartEnabled": true,
+    "startDelaySeconds": 10,
+    "suppressLowWhenStopped": true,
+    "startMessage": "MKS {site}: Genset STARTED (#{starts}) {time}\nEngine: {rpm} rpm\nOil Press: {oil} kPa\nCoolant: {coolant} degC\nFuel: {fuel} %"
+  },
+  "gensetStartUserIds": [1, 2]
+}
+```
+Placeholders: `{site} {time} {starts} {rpm} {oil} {coolant} {fuel}`. The text must use plain characters and
+fit one SMS (160 characters with sample values); at most 5 recipients, each with a phone number (422 otherwise).
+Returns 503 with a clear message if the migration `2026-11-06-sms-settings.sql` has not been run.
+
+### 9. SMS Log API (`/api/v1/sms-log`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/sms-log?limit=100&status=FAILED` | Newest SMS first, plus the SENT / FAILED count of the last 7 days |
+
+### 10. Alert Monitor (`/api/v1/alert-monitor/run`)
+
+`POST` runs the threshold email check now. Needs `ALERT_MONITOR_TOKEN` in `.env` and the header
+`x-monitor-token`; without the variable the endpoint is switched off (404).
 
 ---
 

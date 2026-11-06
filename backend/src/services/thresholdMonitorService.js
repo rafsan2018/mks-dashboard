@@ -2,11 +2,28 @@
 
 const thresholdModel = require('../models/thresholdModel');
 const thresholdAlertStateModel = require('../models/thresholdAlertStateModel');
+const registerReadingModel = require('../models/registerReadingModel');
 const userModel = require('../models/userModel');
 const alertRecipientModel = require('../models/alertRecipientModel');
 const emailService = require('./emailService');
 const { logger } = require('../utils/logger');
+const { tableForGroup, isActiveStatus } = require('../utils/readingTables');
 
+/**
+ * Email alerts for thresholds.
+ *
+ * Every ACTIVE threshold sends an email to the users selected for it on the Alert Recipients page
+ * (ThresholdEmailNotifyUsers). It does not depend on the SMS switch: SMS is a separate channel,
+ * sent by the BE service on site.
+ *
+ * Two ways a reading gets here:
+ *  - processReading(s): readings posted to the API (POST /readings)
+ *  - checkLatestReadings: the newest stored reading of every active threshold. The BE service writes
+ *    readings straight into the database, so this is what sends the emails for real data.
+ *
+ * An email is sent when a value goes out of range (ThresholdAlertStates remembers that it did),
+ * and again only after the value has been back inside the limits.
+ */
 class ThresholdMonitorService {
   _getViolation(threshold, value) {
     const minValue = threshold.MinValue !== null ? Number(threshold.MinValue) : null;
@@ -21,29 +38,38 @@ class ThresholdMonitorService {
     return null;
   }
 
+  /**
+   * One value against one threshold. Returns true when an alert email was started.
+   * With waitForEmail the emails are finished when this returns, otherwise they are sent in the background.
+   */
+  async _evaluate({ threshold, value, recordedAt, userId, waitForEmail = false }) {
+    const warning = this._getViolation(threshold, value);
+    const isActive = Number(threshold.IsActive) === 1;
+    const hasNewViolation = await thresholdAlertStateModel.updateViolation(
+      threshold.ThresholdId,
+      isActive && Boolean(warning)
+    );
+
+    if (!isActive || !warning || !hasNewViolation) return false;
+
+    const sending = this._dispatchEmail({
+      userId: Number(userId),
+      threshold,
+      currentValue: value,
+      warning,
+      recordedAt: recordedAt || new Date(),
+    });
+
+    if (waitForEmail) await sending;
+    return true;
+  }
+
   async _processReading(reading, userId, thresholds) {
     const currentValue = Number(reading.scaledValue);
     if (!Number.isFinite(currentValue)) return;
 
     for (const threshold of thresholds) {
-      const warning = this._getViolation(threshold, currentValue);
-      const isActive = Number(threshold.IsActive) === 1;
-      const hasNewViolation = await thresholdAlertStateModel.updateViolation(
-        threshold.ThresholdId,
-        isActive && Boolean(warning)
-      );
-
-      if (!isActive || !warning || !hasNewViolation || Number(threshold.SMSEnabled) !== 1) {
-        continue;
-      }
-
-      this._dispatchEmail({
-        userId: Number(userId),
-        threshold,
-        currentValue,
-        warning,
-        recordedAt: reading.recordedAt || new Date(),
-      });
+      await this._evaluate({ threshold, value: currentValue, recordedAt: reading.recordedAt, userId });
     }
   }
 
@@ -63,6 +89,57 @@ class ThresholdMonitorService {
       }
       await this._processReading(reading, userId, thresholdsByRegister.get(reading.registerId));
     }
+  }
+
+  /**
+   * Check the newest stored reading of every active threshold.
+   * Run on a timer (alertMonitorScheduler) or by POST /alert-monitor/run.
+   * @returns {Promise<{thresholds:number, checked:number, alerts:number}>}
+   */
+  async checkLatestReadings() {
+    const thresholds = await thresholdModel.findAllActiveForMonitor();
+
+    // Registers of one group share a readings table; inactive registers store no readings
+    const byTable = new Map();
+    for (const threshold of thresholds) {
+      if (!isActiveStatus(threshold.RegisterStatus)) continue;
+      const table = tableForGroup(threshold.RegisterGroup);
+      if (!table) continue;
+      if (!byTable.has(table)) byTable.set(table, []);
+      byTable.get(table).push(threshold);
+    }
+
+    let checked = 0;
+    let alerts = 0;
+
+    for (const [table, list] of byTable) {
+      const registerIds = [...new Set(list.map((t) => t.RegisterId))];
+      const latest = new Map(
+        (await registerReadingModel.findLatestValues(table, registerIds)).map((r) => [r.RegisterId, r])
+      );
+
+      for (const threshold of list) {
+        const reading = latest.get(threshold.RegisterId);
+        const value = reading ? Number(reading.ScaledValue) : NaN;
+        if (!Number.isFinite(value)) continue;
+
+        checked += 1;
+        try {
+          const sent = await this._evaluate({
+            threshold,
+            value,
+            recordedAt: reading.RecordedAt,
+            userId: NaN,
+            waitForEmail: true,
+          });
+          if (sent) alerts += 1;
+        } catch (error) {
+          logger.error('Threshold check failed', { thresholdId: threshold.ThresholdId, error: error.message });
+        }
+      }
+    }
+
+    return { thresholds: thresholds.length, checked, alerts };
   }
 
   /**

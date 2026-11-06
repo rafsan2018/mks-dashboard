@@ -3,6 +3,7 @@
 const alertRecipientModel = require('../models/alertRecipientModel');
 const { NotFoundError, ValidationError } = require('../utils/errors');
 const { logger } = require('../utils/logger');
+const { isSmsRegister, MAX_SMS_RECIPIENTS, SMS_REGISTER_NAMES } = require('../utils/alertRules');
 
 const unique = (ids = []) => [...new Set(ids.map(Number))];
 const hasText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -39,6 +40,28 @@ class AlertRecipientService {
     if (missingUser) throw new NotFoundError(`User with ID ${missingUser}`);
 
     const errors = [];
+
+    // SMS rules: only some registers send SMS, and each SMS goes to a small group
+    const registerNames = (await alertRecipientModel.findRegisterNames(thresholdIds)) || {};
+    for (const item of normalized) {
+      if (item.smsUserIds.length === 0) continue;
+      const registerName = registerNames[item.thresholdId] || `threshold ${item.thresholdId}`;
+      if (!isSmsRegister(registerNames[item.thresholdId])) {
+        errors.push({
+          field: 'smsUserIds',
+          message: `${registerName}: SMS is only available for ${SMS_REGISTER_NAMES.join(', ')} (the other thresholds send Email)`,
+          value: item.thresholdId,
+        });
+      }
+      if (item.smsUserIds.length > MAX_SMS_RECIPIENTS) {
+        errors.push({
+          field: 'smsUserIds',
+          message: `${registerName}: at most ${MAX_SMS_RECIPIENTS} people can receive the SMS (${item.smsUserIds.length} selected)`,
+          value: item.thresholdId,
+        });
+      }
+    }
+
     for (const item of normalized) {
       for (const userId of item.emailUserIds) {
         if (!hasText(users.get(userId).Email)) {

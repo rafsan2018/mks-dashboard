@@ -4,6 +4,7 @@ const thresholdModel = require('../models/thresholdModel');
 const registerDefinitionModel = require('../models/registerDefinitionModel');
 const { NotFoundError, ValidationError } = require('../utils/errors');
 const { logger } = require('../utils/logger');
+const { isSmsRegister } = require('../utils/alertRules');
 
 class ThresholdService {
   /**
@@ -55,6 +56,9 @@ class ThresholdService {
       }
     }
 
+    // SMS is only sent for oil pressure, coolant temperature and fuel level; other thresholds send Email
+    if (!isSmsRegister(register.RegisterName)) data = { ...data, smsEnabled: 0 };
+
     const threshold = await thresholdModel.create(data);
     logger.info(`Threshold created for register ${data.registerId} [Severity: ${data.severity || 'Warning'}]`);
     return threshold;
@@ -67,10 +71,15 @@ class ThresholdService {
     const threshold = await thresholdModel.findById(thresholdId);
     if (!threshold) throw new NotFoundError('Threshold');
 
+    let registerName = threshold.RegisterName;
     if (updates.registerId) {
       const register = await registerDefinitionModel.findById(updates.registerId);
       if (!register) throw new NotFoundError('Register definition');
+      registerName = register.RegisterName;
     }
+
+    // SMS is only sent for oil pressure, coolant temperature and fuel level; other thresholds send Email
+    if (updates.smsEnabled && !isSmsRegister(registerName)) updates = { ...updates, smsEnabled: 0 };
 
     const effectiveMin = updates.minValue !== undefined ? updates.minValue : threshold.MinValue;
     const effectiveMax = updates.maxValue !== undefined ? updates.maxValue : threshold.MaxValue;

@@ -142,3 +142,35 @@ CREATE TABLE IF NOT EXISTS ThresholdEmailNotifyUsers (
   CONSTRAINT FK_ThresholdEmailNotifyUsers_Users
     FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ─── SMS settings (edited on the dashboard, SMS Alerts page) ─────────────
+-- Copied to SQLite by the C# BE service every 5 minutes. See migrations/2026-11-06-sms-settings.sql.
+CREATE TABLE IF NOT EXISTS AlertSettings (
+  SettingKey   VARCHAR(50)  NOT NULL,
+  SettingValue VARCHAR(500) NOT NULL,
+  UpdatedAt    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (SettingKey)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Who receives SMS that do not belong to a threshold (EventType 'GensetStart')
+CREATE TABLE IF NOT EXISTS AlertEventRecipients (
+  EventType VARCHAR(30) NOT NULL,
+  UserId    INT         NOT NULL,
+  PRIMARY KEY (EventType, UserId),
+  KEY FK_AlertEventRecipients_Users (UserId),
+  CONSTRAINT FK_AlertEventRecipients_Users
+    FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Log of every SMS the C# BE service tried to send (ThresholdId is empty for "genset started")
+CREATE TABLE IF NOT EXISTS SmsAlertLog (
+  AlertId     BIGINT AUTO_INCREMENT PRIMARY KEY,
+  ThresholdId INT          NULL,
+  Recipient   VARCHAR(30)  NULL,
+  Message     VARCHAR(255) NOT NULL,
+  Status      ENUM('PENDING', 'SENT', 'FAILED') NOT NULL DEFAULT 'PENDING',
+  SentAt      DATETIME     NULL,
+  KEY FK_SmsAlertLog_Thresholds (ThresholdId),
+  CONSTRAINT FK_SmsAlertLog_Thresholds
+    FOREIGN KEY (ThresholdId) REFERENCES Thresholds(ThresholdId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

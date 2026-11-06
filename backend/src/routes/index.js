@@ -10,6 +10,9 @@ const registerDefinitionRoutes = require('./registerDefinitionRoutes');
 const registerReadingRoutes = require('./registerReadingRoutes');
 const thresholdRoutes = require('./thresholdRoutes');
 const alertRecipientRoutes = require('./alertRecipientRoutes');
+const alertSettingsRoutes = require('./alertSettingsRoutes');
+const alertMonitorRoutes = require('./alertMonitorRoutes');
+const smsLogRoutes = require('./smsLogRoutes');
 
 // ─── Route Registration ────────────────────────────────────────────────────
 router.use('/auth', authRoutes);
@@ -20,6 +23,9 @@ router.use('/registers', registerDefinitionRoutes);
 router.use('/readings', registerReadingRoutes);
 router.use('/thresholds', thresholdRoutes);
 router.use('/alert-recipients', alertRecipientRoutes);
+router.use('/alert-settings', alertSettingsRoutes);
+router.use('/alert-monitor', alertMonitorRoutes);
+router.use('/sms-log', smsLogRoutes);
 
 // ─── API Info Endpoint ─────────────────────────────────────────────────────
 router.get('/', (req, res) => {
@@ -37,6 +43,8 @@ router.get('/', (req, res) => {
       readings: '/api/v1/readings',
       thresholds: '/api/v1/thresholds',
       alertRecipients: '/api/v1/alert-recipients',
+      alertSettings: '/api/v1/alert-settings',
+      smsLog: '/api/v1/sms-log',
     },
     timestamp: new Date().toISOString(),
   });

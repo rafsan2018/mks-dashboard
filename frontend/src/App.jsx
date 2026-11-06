@@ -9,6 +9,7 @@ import Settings from './pages/Settings';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
 import AlertRecipients from './pages/AlertRecipients';
+import SmsAlerts from './pages/SmsAlerts';
 
 import { LoadingProvider } from './context/LoadingContext';
 import GlobalLoadingSpinner from './components/GlobalLoadingSpinner';
@@ -32,6 +33,7 @@ function App() {
                 <Route path="/dpm"       element={<DPM />} />
                 <Route path="/settings"  element={<Settings />} />
                 <Route path="/recipients" element={<AlertRecipients />} />
+                <Route path="/sms-alerts" element={<SmsAlerts />} />
                 <Route path="/users"     element={<Users />} />
                 <Route path="/profile"   element={<Profile />} />
                 <Route path="*"          element={<Navigate to="/dashboard" replace />} />

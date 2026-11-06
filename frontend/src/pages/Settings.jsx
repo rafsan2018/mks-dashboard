@@ -20,6 +20,7 @@ import {
   getRegisterDefinitions,
 } from '../api/thresholdService';
 import { sendTestEmail } from '../api/authService';
+import { isSmsRegister } from '../constants/alertRules';
 
 /* ── Condition Type Options ── */
 const CONDITION_TYPES = [
@@ -671,9 +672,18 @@ const Settings = () => {
 
                   {/* Column 5: Dynamic SMSEnabled & Dynamic IsActive + Actions (2 cols) */}
                   <div className="lg:col-span-2 flex items-center justify-between lg:justify-end gap-3 pt-2 lg:pt-0 border-t lg:border-t-0 border-dark-600/40">
-                    {/* SMS Alert Status (Dynamic SMSEnabled) */}
+                    {/* SMS Alert Status (Dynamic SMSEnabled). SMS is only sent for oil pressure, coolant temperature and fuel level. */}
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-[9px] font-bold text-dark-300 uppercase tracking-wider">SMS Alert · #{item.thresholdId}</span>
+                      {!isSmsRegister(item.registerName) ? (
+                        <span
+                          className="text-[9px] font-mono font-bold px-1.5 py-1 rounded"
+                          style={{ background: 'rgba(107, 114, 128, 0.15)', color: '#9ca3af', border: '1px solid rgba(107, 114, 128, 0.2)' }}
+                          title="SMS is only sent for Oil Pressure, Coolant Temperature and Fuel Level. This threshold sends Email."
+                        >
+                          EMAIL ONLY
+                        </span>
+                      ) : (
                       <div className="flex items-center gap-1.5">
                         <Toggle
                           checked={item.smsEnabled}
@@ -691,6 +701,7 @@ const Settings = () => {
                           {item.smsEnabled ? 'ON' : 'OFF'}
                         </span>
                       </div>
+                      )}
                     </div>
 
                     {/* Active Status (Dynamic IsActive) */}

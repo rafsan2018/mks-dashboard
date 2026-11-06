@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../config/database');
+const { isSmsRegister, MAX_SMS_RECIPIENTS } = require('../utils/alertRules');
 
 // One row per (threshold, user) in each table.
 // SMS  -> ThresholdNotifyUsers      (also read by the C# BE service for WhatsApp alerts)
@@ -13,10 +14,17 @@ const TABLES = {
 class AlertRecipientModel {
   /**
    * Recipients of every threshold, including thresholds with nobody selected.
-   * @returns {Promise<Array<{ThresholdId:number, EmailUserIds:number[], SmsUserIds:number[]}>>}
+   * SmsEligible tells if the register can send SMS (oil pressure, coolant temperature, fuel level);
+   * the other thresholds are Email only.
+   * @returns {Promise<Array<{ThresholdId:number, RegisterName:string, SmsEligible:boolean, SmsMax:number, EmailUserIds:number[], SmsUserIds:number[]}>>}
    */
   async findAll() {
-    const [thresholds] = await db.query('SELECT ThresholdId FROM Thresholds ORDER BY ThresholdId ASC');
+    const [thresholds] = await db.query(
+      `SELECT t.ThresholdId, rd.RegisterName
+       FROM Thresholds t
+       LEFT JOIN RegisterDefinitions rd ON rd.RegisterId = t.RegisterId
+       ORDER BY t.ThresholdId ASC`
+    );
     const [rows] = await db.query(
       `SELECT ThresholdId, UserId, 'email' AS Channel FROM ${TABLES.email}
        UNION ALL
@@ -24,7 +32,14 @@ class AlertRecipientModel {
     );
 
     const byThreshold = new Map(
-      thresholds.map(t => [t.ThresholdId, { ThresholdId: t.ThresholdId, EmailUserIds: [], SmsUserIds: [] }])
+      thresholds.map(t => [t.ThresholdId, {
+        ThresholdId: t.ThresholdId,
+        RegisterName: t.RegisterName || '',
+        SmsEligible: isSmsRegister(t.RegisterName),
+        SmsMax: MAX_SMS_RECIPIENTS,
+        EmailUserIds: [],
+        SmsUserIds: [],
+      }])
     );
     for (const row of rows) {
       const entry = byThreshold.get(row.ThresholdId);
@@ -54,6 +69,19 @@ class AlertRecipientModel {
       [thresholdId]
     );
     return rows;
+  }
+
+  /** Register name of each given threshold, as { ThresholdId: 'Oil Pressure' } */
+  async findRegisterNames(thresholdIds) {
+    if (thresholdIds.length === 0) return {};
+    const [rows] = await db.query(
+      `SELECT t.ThresholdId, rd.RegisterName
+       FROM Thresholds t
+       LEFT JOIN RegisterDefinitions rd ON rd.RegisterId = t.RegisterId
+       WHERE t.ThresholdId IN (?)`,
+      [thresholdIds]
+    );
+    return Object.fromEntries(rows.map(r => [r.ThresholdId, r.RegisterName || '']));
   }
 
   async findExistingThresholdIds(thresholdIds) {
