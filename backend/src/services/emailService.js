@@ -1,6 +1,8 @@
 'use strict';
 
 const nodemailer = require('nodemailer');
+const { getEmailConfig } = require('../config/email');
+const { renderEmail } = require('../utils/emailTemplate');
 
 function createSmtpError(error, host, port) {
   const authenticationFailed = error.responseCode === 535 ||
@@ -32,30 +34,30 @@ function createSmtpError(error, host, port) {
   return wrapped;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// Badge / value colours per threshold severity in the HTML template
+const SEVERITY_COLORS = {
+  Critical: { color: '#b42318', background: '#fef3f2' },
+  Warning:  { color: '#b54708', background: '#fffaeb' },
+  Info:     { color: '#175cd3', background: '#eff8ff' },
+};
 
 class EmailService {
+  // SMTP settings come from src/config/email.js (hardcoded values) or backend/.env
   _createTransporter() {
-    const host = process.env.SMTP_HOST;
-    const port = Number(process.env.SMTP_PORT || 587);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASSWORD;
-    const secureSetting = process.env.SMTP_SECURE;
-    const secure = secureSetting === undefined
-      ? port === 465
-      : secureSetting.toLowerCase() === 'true';
+    const { host, port, user, password: pass, secure: secureSetting } = getEmailConfig();
+    const secureText = secureSetting === null || secureSetting === undefined ? null : String(secureSetting).toLowerCase();
+    const secure = secureText === null ? port === 465 : secureText === 'true';
 
     if (!host || !user || !pass || !Number.isInteger(port) || port < 1) {
-      throw new Error('SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASSWORD must be configured');
+      const error = new Error(
+        'Email is not configured. Set the SMTP host, port, user and password in ' +
+        'backend/src/config/email.js or in backend/.env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD), then restart the backend.'
+      );
+      error.statusCode = 503;
+      error.code = 'SMTP_NOT_CONFIGURED';
+      throw error;
     }
-    if (secureSetting !== undefined && !['true', 'false'].includes(secureSetting.toLowerCase())) {
+    if (secureText !== null && !['true', 'false'].includes(secureText)) {
       throw new Error('SMTP_SECURE must be either true or false');
     }
 
@@ -70,60 +72,56 @@ class EmailService {
     });
   }
 
+  // Content: src/templates/email/threshold-alert.html + threshold-alert.txt
   async sendThresholdNotification({ recipient, threshold, currentValue, warning, recordedAt }) {
-    const timestamp = new Date(recordedAt).toISOString();
-    const minimum = threshold.MinValue ?? 'Not configured';
-    const maximum = threshold.MaxValue ?? 'Not configured';
-    const unit = threshold.Unit ? ` ${threshold.Unit}` : '';
-    const subject = `[${threshold.Severity}] Threshold alert: ${threshold.RegisterName} (#${threshold.ThresholdId})`;
-    const text = [
+    const colors = SEVERITY_COLORS[threshold.Severity] || SEVERITY_COLORS.Warning;
+    const { subject, text, html } = renderEmail('threshold-alert', {
+      severity: threshold.Severity,
+      severityColor: colors.color,
+      severityBackground: colors.background,
+      thresholdId: threshold.ThresholdId,
+      registerName: threshold.RegisterName,
       warning,
-      `Minimum Value: ${minimum}${unit}`,
-      `Maximum Value: ${maximum}${unit}`,
-      `Current Value: ${currentValue}${unit}`,
-      `Timestamp: ${timestamp}`,
-    ].join('\n');
-    const html = `<p><strong>${escapeHtml(warning)}</strong></p>
-      <ul>
-        <li><strong>Minimum Value:</strong> ${escapeHtml(minimum)}${escapeHtml(unit)}</li>
-        <li><strong>Maximum Value:</strong> ${escapeHtml(maximum)}${escapeHtml(unit)}</li>
-        <li><strong>Current Value:</strong> ${escapeHtml(currentValue)}${escapeHtml(unit)}</li>
-        <li><strong>Timestamp:</strong> ${escapeHtml(timestamp)}</li>
-      </ul>`;
+      currentValue,
+      minimum: threshold.MinValue ?? 'Not configured',
+      maximum: threshold.MaxValue ?? 'Not configured',
+      unit: threshold.Unit ? ` ${threshold.Unit}` : '',
+      timestamp: new Date(recordedAt).toISOString(),
+    });
 
     const transporter = this._createTransporter();
     try {
       return await transporter.sendMail({
-        from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+        from: getEmailConfig().from,
         to: recipient,
         subject,
         text,
         html,
       });
     } catch (error) {
-      throw createSmtpError(error, process.env.SMTP_HOST, process.env.SMTP_PORT || 587);
+      throw createSmtpError(error, getEmailConfig().host, getEmailConfig().port);
     }
   }
 
+  // Content: src/templates/email/test-email.html + test-email.txt
   async sendTestEmail({ recipient, username }) {
-    const sentAt = new Date().toISOString();
-    const greeting = username ? `Hello ${username},` : 'Hello,';
-    const text = `${greeting}\n\nThis is a test email from Modbus Monitor. Email delivery is configured correctly.\n\nSent at: ${sentAt}`;
-    const html = `<p>${escapeHtml(greeting)}</p>
-      <p>This is a test email from Modbus Monitor. Email delivery is configured correctly.</p>
-      <p><strong>Sent at:</strong> ${escapeHtml(sentAt)}</p>`;
+    const { subject, text, html } = renderEmail('test-email', {
+      greeting: username ? `Hello ${username},` : 'Hello,',
+      username: username || '',
+      sentAt: new Date().toISOString(),
+    });
 
     const transporter = this._createTransporter();
     try {
       return await transporter.sendMail({
-        from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+        from: getEmailConfig().from,
         to: recipient,
-        subject: 'Modbus Monitor email test',
+        subject,
         text,
         html,
       });
     } catch (error) {
-      throw createSmtpError(error, process.env.SMTP_HOST, process.env.SMTP_PORT || 587);
+      throw createSmtpError(error, getEmailConfig().host, getEmailConfig().port);
     }
   }
 }

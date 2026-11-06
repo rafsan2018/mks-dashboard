@@ -117,3 +117,28 @@ CREATE TABLE IF NOT EXISTS ThresholdAlertStates (
     FOREIGN KEY (ThresholdId) REFERENCES Thresholds(ThresholdId)
     ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ─── Alert Recipients ─────────────────────────────────────
+-- SMS (WhatsApp) recipients per threshold — read by the C# BE service
+CREATE TABLE IF NOT EXISTS ThresholdNotifyUsers (
+  ThresholdId INT NOT NULL,
+  UserId      INT NOT NULL,
+  PRIMARY KEY (ThresholdId, UserId),
+  KEY FK_ThresholdNotifyUsers_Users (UserId),
+  CONSTRAINT FK_ThresholdNotifyUsers_Thresholds
+    FOREIGN KEY (ThresholdId) REFERENCES Thresholds(ThresholdId) ON DELETE CASCADE,
+  CONSTRAINT FK_ThresholdNotifyUsers_Users
+    FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Email recipients per threshold — read by this backend when it sends alert emails
+CREATE TABLE IF NOT EXISTS ThresholdEmailNotifyUsers (
+  ThresholdId INT NOT NULL,
+  UserId      INT NOT NULL,
+  PRIMARY KEY (ThresholdId, UserId),
+  KEY FK_ThresholdEmailNotifyUsers_Users (UserId),
+  CONSTRAINT FK_ThresholdEmailNotifyUsers_Thresholds
+    FOREIGN KEY (ThresholdId) REFERENCES Thresholds(ThresholdId) ON DELETE CASCADE,
+  CONSTRAINT FK_ThresholdEmailNotifyUsers_Users
+    FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

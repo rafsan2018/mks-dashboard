@@ -1,0 +1,13 @@
+Subject: [{{severity}}] Threshold alert: {{registerName}} (#{{thresholdId}})
+
+{{warning}}
+Minimum Value: {{minimum}}{{unit}}
+Maximum Value: {{maximum}}{{unit}}
+Current Value: {{currentValue}}{{unit}}
+Timestamp: {{timestamp}}
+
+Please check the genset room. You receive this alert because you are on the notification list for this threshold.
+
+--
+Modbus Monitor, Genset Room Notification System
+This is an automatic message. Please do not reply to this email.

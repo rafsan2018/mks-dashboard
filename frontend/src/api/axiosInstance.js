@@ -1,14 +1,14 @@
 /**
  * axiosInstance.js
  * Centralised Axios client for all backend API calls.
- * Base URL → http://localhost:5000/api/v1  (backend dev server)
+ * Base URL → https://mks-api.elliancesystem.com/api/v1 (production API)
+ * To use a local backend, set VITE_API_URL in frontend/.env.development.local,
+ * e.g. VITE_API_URL=http://localhost:5000/api/v1 (only used by `npm run dev`).
  */
 
 import axios from 'axios';
 
-// const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
-
-const API_BASE_URL = 'https://mks-api.elliancesystem.com/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://mks-api.elliancesystem.com/api/v1';
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

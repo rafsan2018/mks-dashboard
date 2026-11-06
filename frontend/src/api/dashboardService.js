@@ -8,9 +8,11 @@
  */
 
 import axiosInstance from './axiosInstance';
+import { getInactiveNames } from './deviceReadingService';
 
 // ─── Register name constants (matching RegisterDefinitions.RegisterName) ─────
-const G = {
+export const G = {
+  loadPercent: 'Generator Percentage Of Full Power',
   oilPressure: 'Oil Pressure',
   coolantTemp: 'Coolant Temperature',
   fuelLevel: 'Fuel Level',
@@ -26,7 +28,7 @@ const G = {
   mainsVoltL1N: 'Mains L1-N Voltage',
 };
 
-const D = {
+export const D = {
   avgVoltage: 'Average of Voltage',
   avgCurrent: 'Average of Current',
   avgFrequency: 'Average of Frequency',
@@ -228,6 +230,8 @@ export const transformDashboardResponse = (apiData, prevOv = {}) => {
     activeAlerts,
     genset,
     dpm,
+    // Registers with Status <> 'Active' — their widgets are hidden
+    inactive: getInactiveNames([...(gensetMeta.registers || []), ...(dpmMeta.registers || [])]),
     _meta: {
       totalReadings: apiData.totalReadings,
       generatedAt: apiData.generatedAt,
@@ -310,6 +314,7 @@ export const createInitialDashboardData = () => ({
       peakDemand: 0, avgCurrentTHD: 0, avgVoltageTHD: 0, digitalOutput1: false, digitalOutput2: false,
     },
   },
+  inactive: new Set(),
 });
 
 /**
@@ -318,8 +323,9 @@ export const createInitialDashboardData = () => ({
  * @param {object} prevData - Previous state data used for non-register properties
  * @returns {Promise<object>} Normalised dashboard data object
  */
-export const fetchDashboard = async (prevData) => {
-  const response = await axiosInstance.get('/readings/dashboard');
+export const fetchDashboard = async (prevData, { background = false } = {}) => {
+  // background = timed refresh: no global loading spinner
+  const response = await axiosInstance.get('/readings/dashboard', { skipLoading: background });
   const apiData = response.data?.data ?? response.data;
   return transformDashboardResponse(apiData, prevData);
 };

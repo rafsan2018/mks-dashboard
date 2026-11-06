@@ -116,10 +116,13 @@ For SMTP port `465`, set `SMTP_SECURE=true`; for port `587`, set
 Keep SMTP credentials only in the backend environment, never in source files.
 
 ### Threshold email alerts
-Reading ingestion (`POST /api/v1/readings` and `POST /api/v1/readings/bulk`) uses the
-`X-User-Id` header to select a profile. The backend evaluates active thresholds
-when each reading is stored, and emails that profile's current
-email when its SMS Alert setting is enabled. Repeated readings during the same
+The backend evaluates active thresholds when each reading is stored
+(`POST /api/v1/readings` and `POST /api/v1/readings/bulk`) and, when the threshold's
+SMS Alert setting is enabled, emails every active user selected for that threshold on
+the **Alert Recipients** page (table `ThresholdEmailNotifyUsers`). If nobody is
+selected for a threshold, it falls back to the profile in the `X-User-Id` header.
+SMS (WhatsApp) recipients are stored in `ThresholdNotifyUsers` and sent by the C# BE
+service. Create both tables with `migrations/2026-11-06-alert-recipients.sql`. Repeated readings during the same
 violation do not resend; the alert becomes eligible again after the reading returns
 within range. Configure SMTP as above. The database schema includes
 `ThresholdAlertStates`; apply the schema update before deploying this change.
@@ -423,6 +426,29 @@ X-User-Id: 4
 | `POST` | `/api/v1/users` | Create user with specified role |
 | `PUT` | `/api/v1/users/:id` | Update user profile, role or active status |
 | `DELETE`| `/api/v1/users/:id` | Delete user |
+
+---
+
+### 7. Alert Recipients API (`/api/v1/alert-recipients`)
+
+Who receives Email and SMS alerts for each threshold.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/alert-recipients` | Every threshold with its `EmailUserIds` and `SmsUserIds` |
+| `PUT` | `/api/v1/alert-recipients` | Replace the recipients of one or more thresholds (one transaction) |
+
+**Save Body** (an empty list removes everyone for that channel):
+```json
+{
+  "items": [
+    { "thresholdId": 1, "emailUserIds": [1, 2], "smsUserIds": [1] },
+    { "thresholdId": 3, "emailUserIds": [], "smsUserIds": [2] }
+  ]
+}
+```
+Users on `emailUserIds` must have an email and users on `smsUserIds` a phone number (422 otherwise).
+Inactive users can stay selected but receive nothing until they are active again.
 
 ---
 

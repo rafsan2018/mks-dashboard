@@ -4,11 +4,13 @@ const thresholdMonitorService = require('../../src/services/thresholdMonitorServ
 const thresholdModel = require('../../src/models/thresholdModel');
 const thresholdAlertStateModel = require('../../src/models/thresholdAlertStateModel');
 const userModel = require('../../src/models/userModel');
+const alertRecipientModel = require('../../src/models/alertRecipientModel');
 const emailService = require('../../src/services/emailService');
 
 jest.mock('../../src/models/thresholdModel');
 jest.mock('../../src/models/thresholdAlertStateModel');
 jest.mock('../../src/models/userModel');
+jest.mock('../../src/models/alertRecipientModel');
 jest.mock('../../src/services/emailService');
 
 describe('ThresholdMonitorService', () => {
@@ -26,6 +28,7 @@ describe('ThresholdMonitorService', () => {
     }]);
     thresholdAlertStateModel.updateViolation.mockResolvedValue(true);
     userModel.findById.mockResolvedValue({ UserId: 3, Email: 'operator@example.com' });
+    alertRecipientModel.findEmailRecipients.mockResolvedValue([]);
     emailService.sendThresholdNotification.mockResolvedValue();
   });
 
@@ -93,5 +96,43 @@ describe('ThresholdMonitorService', () => {
       thresholdMonitorService.processReading({ registerId: 4, scaledValue: 25 }, 3)
     ).resolves.toBeUndefined();
     await new Promise(setImmediate);
+  });
+  test('emails every user selected on the Alert Recipients page instead of the sender', async () => {
+    alertRecipientModel.findEmailRecipients.mockResolvedValue([
+      { UserId: 1, Email: 'admin@example.com' },
+      { UserId: 2, Email: 'jsim@example.com' },
+    ]);
+
+    await thresholdMonitorService.processReading({ registerId: 4, scaledValue: 25 }, 3);
+    await new Promise(setImmediate);
+
+    expect(alertRecipientModel.findEmailRecipients).toHaveBeenCalledWith(7);
+    expect(userModel.findById).not.toHaveBeenCalled();
+    expect(emailService.sendThresholdNotification).toHaveBeenCalledTimes(2);
+    expect(emailService.sendThresholdNotification.mock.calls.map(([arg]) => arg.recipient))
+      .toEqual(['admin@example.com', 'jsim@example.com']);
+  });
+
+  test('keeps emailing the other recipients when one delivery fails', async () => {
+    alertRecipientModel.findEmailRecipients.mockResolvedValue([
+      { UserId: 1, Email: 'admin@example.com' },
+      { UserId: 2, Email: 'jsim@example.com' },
+    ]);
+    emailService.sendThresholdNotification
+      .mockRejectedValueOnce(new Error('Mailbox full'))
+      .mockResolvedValueOnce();
+
+    await thresholdMonitorService.processReading({ registerId: 4, scaledValue: 25 }, 3);
+    await new Promise(setImmediate);
+
+    expect(emailService.sendThresholdNotification).toHaveBeenCalledTimes(2);
+  });
+
+  test('sends nothing when no recipients are selected and the sender user ID is missing', async () => {
+    await thresholdMonitorService.processReading({ registerId: 4, scaledValue: 25 }, NaN);
+    await new Promise(setImmediate);
+
+    expect(userModel.findById).not.toHaveBeenCalled();
+    expect(emailService.sendThresholdNotification).not.toHaveBeenCalled();
   });
 });

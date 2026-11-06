@@ -3,6 +3,7 @@
 const thresholdModel = require('../models/thresholdModel');
 const thresholdAlertStateModel = require('../models/thresholdAlertStateModel');
 const userModel = require('../models/userModel');
+const alertRecipientModel = require('../models/alertRecipientModel');
 const emailService = require('./emailService');
 const { logger } = require('../utils/logger');
 
@@ -36,13 +37,6 @@ class ThresholdMonitorService {
         continue;
       }
 
-      if (!Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
-        logger.warn('Threshold alert triggered without a valid recipient profile ID', {
-          thresholdId: threshold.ThresholdId,
-        });
-        continue;
-      }
-
       this._dispatchEmail({
         userId: Number(userId),
         threshold,
@@ -71,34 +65,66 @@ class ThresholdMonitorService {
     }
   }
 
-  async _dispatchEmail({ userId, threshold, currentValue, warning, recordedAt }) {
-    try {
-      const user = await userModel.findById(userId);
-      if (!user || !user.Email) {
-        logger.warn('Threshold alert email skipped because the selected user has no registered email', {
-          userId,
-          thresholdId: threshold.ThresholdId,
-        });
-        return;
-      }
+  /**
+   * Who gets the alert email:
+   * 1. The users selected for this threshold on the Alert Recipients page (ThresholdEmailNotifyUsers).
+   * 2. If nobody is selected, the user who sent the readings (x-user-id), as before.
+   */
+  async _getEmailRecipients(threshold, userId) {
+    const selected = await alertRecipientModel.findEmailRecipients(threshold.ThresholdId);
+    if (selected.length > 0) return selected;
 
-      await emailService.sendThresholdNotification({
-        recipient: user.Email,
-        threshold,
-        currentValue,
-        warning,
-        recordedAt,
+    if (!Number.isSafeInteger(userId) || userId < 1) {
+      logger.warn('Threshold alert email skipped: no email recipients selected and no valid sender user ID', {
+        thresholdId: threshold.ThresholdId,
       });
-      logger.info('Threshold alert email sent', {
+      return [];
+    }
+
+    const user = await userModel.findById(userId);
+    if (!user || !user.Email) {
+      logger.warn('Threshold alert email skipped because the selected user has no registered email', {
         userId,
         thresholdId: threshold.ThresholdId,
       });
+      return [];
+    }
+    return [user];
+  }
+
+  async _dispatchEmail({ userId, threshold, currentValue, warning, recordedAt }) {
+    let recipients;
+    try {
+      recipients = await this._getEmailRecipients(threshold, userId);
     } catch (error) {
-      logger.error('Failed to send threshold alert email', {
-        userId,
+      logger.error('Failed to look up threshold alert email recipients', {
         thresholdId: threshold.ThresholdId,
         error: error.message,
       });
+      return;
+    }
+
+    // One email per recipient, so addresses are not shared and one failure does not stop the others
+    for (const user of recipients) {
+      try {
+        await emailService.sendThresholdNotification({
+          recipient: user.Email,
+          threshold,
+          currentValue,
+          warning,
+          recordedAt,
+        });
+        logger.info('Threshold alert email sent', {
+          userId: user.UserId,
+          thresholdId: threshold.ThresholdId,
+        });
+      } catch (error) {
+        logger.error('Failed to send threshold alert email', {
+          userId: user.UserId,
+          thresholdId: threshold.ThresholdId,
+          error: error.message,
+        });
+      }
     }
   }
 }

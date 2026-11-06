@@ -10,6 +10,7 @@ class RegisterDefinitionModel {
     const [rows] = await db.query(
       `SELECT rd.RegisterId, rd.DeviceId, rd.RegisterName, rd.Action, rd.FunctionCode,
               rd.DataType, rd.StartAddress, rd.RegisterCount, rd.ScaleFactor, rd.Unit,
+              rd.\`Group\`, rd.Status,
               d.DeviceName, d.DeviceModel, d.SlaveAddress
        FROM RegisterDefinitions rd
        JOIN Devices d ON rd.DeviceId = d.DeviceId
@@ -52,6 +53,7 @@ class RegisterDefinitionModel {
     const baseQuery = `
       SELECT rd.RegisterId, rd.DeviceId, rd.RegisterName, rd.Action, rd.FunctionCode,
              rd.DataType, rd.StartAddress, rd.RegisterCount, rd.ScaleFactor, rd.Unit,
+             rd.\`Group\`, rd.Status,
              d.DeviceName, d.DeviceModel
       FROM RegisterDefinitions rd
       JOIN Devices d ON rd.DeviceId = d.DeviceId
@@ -74,7 +76,8 @@ class RegisterDefinitionModel {
   async findByDeviceId(deviceId) {
     const [rows] = await db.query(
       `SELECT RegisterId, DeviceId, RegisterName, Action, FunctionCode,
-              DataType, StartAddress, RegisterCount, ScaleFactor, Unit
+              DataType, StartAddress, RegisterCount, ScaleFactor, Unit,
+              \`Group\`, Status
        FROM RegisterDefinitions
        WHERE DeviceId = ?
        ORDER BY StartAddress ASC`,

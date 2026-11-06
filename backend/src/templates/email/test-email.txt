@@ -1,0 +1,12 @@
+Subject: Modbus Monitor email test
+
+{{greeting}}
+
+This is a test email from Modbus Monitor. Email delivery is configured correctly.
+Threshold alerts will be sent to this address when a reading goes out of range.
+
+Sent at: {{sentAt}}
+
+--
+Modbus Monitor, Genset Room Notification System
+This is an automatic message. Please do not reply to this email.

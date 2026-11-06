@@ -81,6 +81,27 @@ export const getRawVal = (lookup, ...names) => {
 };
 
 /**
+ * Names of the registers whose RegisterDefinitions.Status is not 'Active'.
+ * Their widgets are hidden. Before the first API response the set is empty, so nothing is hidden.
+ */
+export const getInactiveNames = (registers = []) => {
+  const names = new Set();
+  if (!Array.isArray(registers)) return names;
+  for (const r of registers) {
+    if (r?.registerName && r.status != null && String(r.status).trim().toLowerCase() !== 'active') {
+      names.add(String(r.registerName).trim());
+    }
+  }
+  return names;
+};
+
+/**
+ * True when at least one of the named registers is Active (or its status is not known yet).
+ * A widget made of several registers is hidden only when all of them are inactive.
+ */
+export const isShown = (inactive, ...names) => names.some(name => !inactive?.has(name));
+
+/**
  * Format helper for text display:
  * Defaults to 2 decimal places.
  */
@@ -98,8 +119,9 @@ export const formatReading = (v, dp = 2) => {
  * @param {number} deviceId
  * @returns {Promise<object>} { deviceId, deviceName, deviceModel, registers: [...] }
  */
-export const fetchDeviceReadings = async (deviceId) => {
-  const response = await axiosInstance.get(`/readings/device/${deviceId}`);
+export const fetchDeviceReadings = async (deviceId, { background = false } = {}) => {
+  // background = timed refresh: no global loading spinner
+  const response = await axiosInstance.get(`/readings/device/${deviceId}`, { skipLoading: background });
   return response.data?.data ?? response.data;
 };
 
@@ -123,6 +145,9 @@ export const G = {
 
   // Generator output
   genFreq:    'Generator Frequency',
+  currentLagLead: 'Generator Current Lag/Lead',
+  pctFullPower:   'Generator Percentage Of Full Power',
+  pctFullVar:     'Generator Percentage Of Full Var',
   voltL1N:    'Generator L1-N Voltage',
   voltL2N:    'Generator L2-N Voltage',
   voltL3N:    'Generator L3-N Voltage',
@@ -165,9 +190,25 @@ export const G = {
   mainsCurL1:    'Mains L1 Current',
   mainsCurL2:    'Mains L2 Current',
   mainsCurL3:    'Mains L3 Current',
+  mainsCurE:     'Mains Earth Current',
+  mainsVoltLagLead: 'Mains Voltage Phase Lag/Lead',
+  mainsCurLagLead:  'Mains Current Lag/Lead',
+  mainsPhaseRotation: 'Mains Phase Rotation',
+  mainsWattsL1:  'Mains L1 Watts',
+  mainsWattsL2:  'Mains L2 Watts',
+  mainsWattsL3:  'Mains L3 Watts',
   mainsTotalW:   'Mains Total Watts',
+  mainsVaL1:     'Mains L1 VA',
+  mainsVaL2:     'Mains L2 VA',
+  mainsVaL3:     'Mains L3 VA',
   mainsTotalVA:  'Mains Total VA',
+  mainsVarL1:    'Mains L1 Var',
+  mainsVarL2:    'Mains L2 Var',
+  mainsVarL3:    'Mains L3 Var',
   mainsTotalVar: 'Mains Total Var',
+  mainsPfL1:     'Mains Power Factor L1',
+  mainsPfL2:     'Mains Power Factor L2',
+  mainsPfL3:     'Mains Power Factor L3',
   mainsAvgPF:    'Mains Average Power Factor',
 };
 
@@ -289,15 +330,28 @@ export const createInitialGensetData = () => ({
     currentL1: 0,
     currentL2: 0,
     currentL3: 0,
+    wattsL1: 0,
+    wattsL2: 0,
+    wattsL3: 0,
     totalWatts: 0,
+    vaL1: 0,
+    vaL2: 0,
+    vaL3: 0,
     totalVA: 0,
+    varL1: 0,
+    varL2: 0,
+    varL3: 0,
     totalVar: 0,
+    pfL1: 0,
+    pfL2: 0,
+    pfL3: 0,
     avgPF: 0,
   },
 
   status_flags: {},
   leds: {},
   alarms: {},
+  inactive: new Set(),
 });
 
 /**
@@ -386,9 +440,21 @@ export const transformGensetResponse = (apiData) => {
       currentL1:     getVal(g, G.mainsCurL1),
       currentL2:     getVal(g, G.mainsCurL2),
       currentL3:     getVal(g, G.mainsCurL3),
+      wattsL1:       getVal(g, G.mainsWattsL1),
+      wattsL2:       getVal(g, G.mainsWattsL2),
+      wattsL3:       getVal(g, G.mainsWattsL3),
       totalWatts:    getVal(g, G.mainsTotalW),
+      vaL1:          getVal(g, G.mainsVaL1),
+      vaL2:          getVal(g, G.mainsVaL2),
+      vaL3:          getVal(g, G.mainsVaL3),
       totalVA:       getVal(g, G.mainsTotalVA),
+      varL1:         getVal(g, G.mainsVarL1),
+      varL2:         getVal(g, G.mainsVarL2),
+      varL3:         getVal(g, G.mainsVarL3),
       totalVar:      getVal(g, G.mainsTotalVar),
+      pfL1:          getVal(g, G.mainsPfL1),
+      pfL2:          getVal(g, G.mainsPfL2),
+      pfL3:          getVal(g, G.mainsPfL3),
       avgPF:         getVal(g, G.mainsAvgPF),
     },
 
@@ -420,6 +486,9 @@ export const transformGensetResponse = (apiData) => {
         getVal(g, ...names) || 1, // 1 = Normal
       ])
     ),
+
+    // Registers with Status <> 'Active' — their widgets are hidden
+    inactive: getInactiveNames(apiData.registers),
   };
 };
 
@@ -919,25 +988,27 @@ export const transformDpmResponse = (apiData) => {
  * @param {string} timeRange - '1h', '6h', '24h', '7d', '30d' (default: '30d')
  * @returns {Promise<object>}
  */
-export const fetchDevicePowerTrends = async (deviceId = 2, timeRange = '30d') => {
+export const fetchDevicePowerTrends = async (deviceId = 2, timeRange = '30d', { background = false } = {}) => {
+  const skipLoading = background;
   try {
     const response = await axiosInstance.get(`/readings/device/${deviceId}/power-trends`, {
       params: { timeRange },
+      skipLoading,
     });
     return response.data?.data ?? response.data;
   } catch (err) {
     console.warn('[deviceReadingService] fetchDevicePowerTrends direct route error, trying timeseries fallback:', err.message);
     try {
-      const dev = await fetchDeviceReadings(deviceId);
+      const dev = await fetchDeviceReadings(deviceId, { background });
       const registers = dev.registers || [];
       const pReg = registers.find(r => r.registerName?.toLowerCase().includes('total of active power'));
       const sReg = registers.find(r => r.registerName?.toLowerCase().includes('total apparent power'));
       const fqReg = registers.find(r => r.registerName?.toLowerCase().includes('reactive power') && r.registerName?.toLowerCase().includes('total'));
 
       const results = await Promise.allSettled([
-        pReg?.registerId ? axiosInstance.get(`/readings/register/${pReg.registerId}/timeseries`, { params: { timeRange } }) : null,
-        sReg?.registerId ? axiosInstance.get(`/readings/register/${sReg.registerId}/timeseries`, { params: { timeRange } }) : null,
-        fqReg?.registerId ? axiosInstance.get(`/readings/register/${fqReg.registerId}/timeseries`, { params: { timeRange } }) : null,
+        pReg?.registerId ? axiosInstance.get(`/readings/register/${pReg.registerId}/timeseries`, { params: { timeRange }, skipLoading }) : null,
+        sReg?.registerId ? axiosInstance.get(`/readings/register/${sReg.registerId}/timeseries`, { params: { timeRange }, skipLoading }) : null,
+        fqReg?.registerId ? axiosInstance.get(`/readings/register/${fqReg.registerId}/timeseries`, { params: { timeRange }, skipLoading }) : null,
       ]);
 
       const pData = results[0].status === 'fulfilled' ? (results[0].value?.data?.data?.data || []) : [];

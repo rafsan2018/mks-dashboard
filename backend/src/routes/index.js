@@ -9,6 +9,7 @@ const comportRoutes = require('./comportRoutes');
 const registerDefinitionRoutes = require('./registerDefinitionRoutes');
 const registerReadingRoutes = require('./registerReadingRoutes');
 const thresholdRoutes = require('./thresholdRoutes');
+const alertRecipientRoutes = require('./alertRecipientRoutes');
 
 // ─── Route Registration ────────────────────────────────────────────────────
 router.use('/auth', authRoutes);
@@ -18,6 +19,7 @@ router.use('/comports', comportRoutes);
 router.use('/registers', registerDefinitionRoutes);
 router.use('/readings', registerReadingRoutes);
 router.use('/thresholds', thresholdRoutes);
+router.use('/alert-recipients', alertRecipientRoutes);
 
 // ─── API Info Endpoint ─────────────────────────────────────────────────────
 router.get('/', (req, res) => {
@@ -34,6 +36,7 @@ router.get('/', (req, res) => {
       registers: '/api/v1/registers',
       readings: '/api/v1/readings',
       thresholds: '/api/v1/thresholds',
+      alertRecipients: '/api/v1/alert-recipients',
     },
     timestamp: new Date().toISOString(),
   });

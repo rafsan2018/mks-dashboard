@@ -18,6 +18,7 @@ import {
   generateSingleTrendExcel,
   downloadExportFile,
 } from '../api/deviceReadingService';
+import usePolling from '../hooks/usePolling';
 
 /* ── helpers ── */
 const fmt = (v, dp = 2) => {
@@ -268,9 +269,6 @@ const TrendExportMenu = ({
   </div>
 );
 
-/* ── Poll interval (ms) ── */
-const POLL_INTERVAL = 30000;
-
 const DPM = () => {
   const [d, setD] = useState(() => createInitialDpmData());
   const [pwrTrend] = useState(() => Array.from({ length: 24 }, (_, i) => ({ time: `${String(i).padStart(2, '0')}:00`, value: 0 })));
@@ -304,9 +302,9 @@ const DPM = () => {
   }, []);
 
   // Fetch Device 2 readings from the API
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ background } = {}) => {
     try {
-      const apiData = await fetchDeviceReadings(2);
+      const apiData = await fetchDeviceReadings(2, { background });
       setD(transformDpmResponse(apiData));
     } catch (err) {
       console.error('[DPM] API error:', err);
@@ -314,9 +312,9 @@ const DPM = () => {
   }, []);
 
   // Fetch dynamic historical power trends for the trend charts
-  const loadTrendData = useCallback(async () => {
+  const loadTrendData = useCallback(async ({ background } = {}) => {
     try {
-      const res = await fetchDevicePowerTrends(2, '24h');
+      const res = await fetchDevicePowerTrends(2, '24h', { background });
       if (res?.alignedRecords && res.alignedRecords.length > 0) {
         setHistoricalTrends(res.alignedRecords);
       }
@@ -325,15 +323,12 @@ const DPM = () => {
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-    loadTrendData();
-    const id = setInterval(() => {
-      loadData();
-      loadTrendData();
-    }, POLL_INTERVAL);
-    return () => clearInterval(id);
-  }, [loadData, loadTrendData]);
+  // Load on mount, then refresh readings and trends every POLL_INTERVAL ms
+  const loadAll = useCallback(
+    (options) => Promise.all([loadData(options), loadTrendData(options)]),
+    [loadData, loadTrendData]
+  );
+  usePolling(loadAll);
 
   // Handle individual trend export (Active Power, Apparent Power, or Reactive Power)
   const handleExportSingle = async (metricKey, format = 'xlsx') => {

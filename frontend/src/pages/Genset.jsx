@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   HiOutlineLightningBolt, HiOutlineStatusOnline, HiOutlineExclamationCircle,
@@ -10,7 +10,8 @@ import AlarmChip from '../components/AlarmChip';
 import StatusChip from '../components/StatusChip';
 import { TrendChart } from '../components/Charts';
 import { ALARM_TYPES, ALARM_LABELS } from '../constants/alarmConstants';
-import { createInitialGensetData, fetchDeviceReadings, transformGensetResponse } from '../api/deviceReadingService';
+import usePolling from '../hooks/usePolling';
+import { createInitialGensetData, fetchDeviceReadings, transformGensetResponse, G, isShown } from '../api/deviceReadingService';
 
 /* ── helpers ── */
 const fmt = (v, dp = 2) => {
@@ -113,8 +114,6 @@ const Expandable = ({ title, color = '#6366f1', children }) => {
 };
 
 /* ═══════════════════════════════════════════════ */
-/* ── Poll interval (ms) ── */
-const POLL_INTERVAL = 30000;
 
 const Genset = () => {
   const createZeroTrend = () => Array.from({ length: 24 }, (_, i) => ({ time: `${String(i).padStart(2, '0')}:00`, value: 0 }));
@@ -125,23 +124,86 @@ const Genset = () => {
   const [batteryTrend] = useState(() => createZeroTrend());
 
   // Fetch Device 1 readings from the API
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ background } = {}) => {
     try {
-      const apiData = await fetchDeviceReadings(1);
+      const apiData = await fetchDeviceReadings(1, { background });
       setData(transformGensetResponse(apiData));
     } catch (err) {
       console.error('[Genset] API error:', err);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-    const id = setInterval(loadData, POLL_INTERVAL);
-    return () => clearInterval(id);
-  }, [loadData]);
+  // Load on mount, then refresh every POLL_INTERVAL ms
+  usePolling(loadData);
+
+  // Widgets of registers with Status <> 'Active' are not shown
+  const on = (...names) => isShown(data.inactive, ...names);
 
   const rt = fmtRunTime(data.engine.runTime);
   const currentLagLeadDeg = Math.acos(Math.min(Math.max(data.generator.avgPF || 0, 0), 1)) * (180 / Math.PI);
+
+  // Power cards: [label, value, register]; rows of inactive registers are removed, empty cards are not shown
+  const visibleCards = (cards) => cards
+    .map(card => ({ ...card, rows: card.rows.filter(([, , reg]) => on(reg)) }))
+    .filter(card => card.rows.length > 0);
+
+  const generatorPowerCards = visibleCards([
+    {
+      title: 'Active Power', unit: 'W', color: '#34d399', rows: [
+        ['L1', data.generator.wattsL1, G.wattsL1], ['L2', data.generator.wattsL2, G.wattsL2], ['L3', data.generator.wattsL3, G.wattsL3], ['Total', data.generator.totalWatts, G.totalWatts]
+      ]
+    },
+    {
+      title: 'Apparent Power', unit: 'VA', color: '#818cf8', rows: [
+        ['L1', data.generator.vaL1, G.vaL1], ['L2', data.generator.vaL2, G.vaL2], ['L3', data.generator.vaL3, G.vaL3], ['Total', data.generator.totalVA, G.totalVA]
+      ]
+    },
+    {
+      title: 'Reactive Power', unit: 'Var', color: '#a78bfa', rows: [
+        ['L1', data.generator.varL1, G.varL1], ['L2', data.generator.varL2, G.varL2], ['L3', data.generator.varL3, G.varL3], ['Total', data.generator.totalVar, G.totalVar]
+      ]
+    },
+    {
+      title: 'Power Factor', unit: '', color: '#38bdf8', rows: [
+        ['PF L1', data.generator.pfL1, G.pfL1], ['PF L2', data.generator.pfL2, G.pfL2], ['PF L3', data.generator.pfL3, G.pfL3], ['Avg PF', data.generator.avgPF, G.avgPF]
+      ]
+    },
+  ]);
+
+  const mainsPowerCards = visibleCards([
+    {
+      title: 'Active Power', unit: 'kW', color: '#34d399', rows: [
+        ['L1', data.mains.wattsL1 / 1000, G.mainsWattsL1], ['L2', data.mains.wattsL2 / 1000, G.mainsWattsL2], ['L3', data.mains.wattsL3 / 1000, G.mainsWattsL3], ['Total', data.mains.totalWatts / 1000, G.mainsTotalW]
+      ]
+    },
+    {
+      title: 'Apparent Power', unit: 'kVA', color: '#818cf8', rows: [
+        ['L1', data.mains.vaL1 / 1000, G.mainsVaL1], ['L2', data.mains.vaL2 / 1000, G.mainsVaL2], ['L3', data.mains.vaL3 / 1000, G.mainsVaL3], ['Total', data.mains.totalVA / 1000, G.mainsTotalVA]
+      ]
+    },
+    {
+      title: 'Reactive Power', unit: 'kVar', color: '#a78bfa', rows: [
+        ['L1', data.mains.varL1 / 1000, G.mainsVarL1], ['L2', data.mains.varL2 / 1000, G.mainsVarL2], ['L3', data.mains.varL3 / 1000, G.mainsVarL3], ['Total', data.mains.totalVar / 1000, G.mainsTotalVar]
+      ]
+    },
+    {
+      title: 'Power Factor', unit: '', color: '#38bdf8', rows: [
+        ['L1', data.mains.pfL1, G.mainsPfL1], ['L2', data.mains.pfL2, G.mainsPfL2], ['L3', data.mains.pfL3, G.mainsPfL3], ['Avg', data.mains.avgPF, G.mainsAvgPF]
+      ]
+    },
+  ]);
+
+  const energyItems = [
+    { lbl: 'Positive kWh', val: fmt(data.generator.positiveKWh, 2), unit: 'kWh', color: '#34d399', reg: G.posKWh },
+    { lbl: 'Negative kWh', val: fmt(data.generator.negativeKWh, 2), unit: 'kWh', color: '#fb7185', reg: G.negKWh },
+    { lbl: 'kVAh', val: fmt(data.generator.kVAh, 2), unit: 'kVAh', color: '#818cf8', reg: G.kVAh },
+    { lbl: 'kVArh', val: fmt(data.generator.kVArh, 2), unit: 'kVArh', color: '#a78bfa', reg: G.kVArh },
+  ].filter(item => on(item.reg));
+
+  const loadItems = [
+    { lbl: 'Full Power', val: '0.00', unit: '%', color: '#34d399', reg: G.pctFullPower },
+    { lbl: 'Full Var', val: '0.0', unit: '%', color: '#a78bfa', reg: G.pctFullVar },
+  ].filter(item => on(item.reg));
 
   const activeAlarms = useMemo(() =>
     Object.entries(data.alarms)
@@ -194,18 +256,18 @@ const Genset = () => {
         {/* Gauges row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4">
           {[
-            { v: data.engine.speed, min: 0, max: 3000, unit: 'RPM', label: 'Engine Speed', color: '#f59e0b', zones: null },
+            { v: data.engine.speed, min: 0, max: 3000, unit: 'RPM', label: 'Engine Speed', color: '#f59e0b', zones: null, reg: G.engineSpeed },
             {
-              v: data.engine.oilPressure, min: 0, max: 10000, unit: 'kPa', label: 'Oil Pressure', color: '#10b981',
+              v: data.engine.oilPressure, min: 0, max: 10000, unit: 'kPa', label: 'Oil Pressure', color: '#10b981', reg: G.oilPressure,
               zones: [{ start: 0, end: 1500, color: '#f43f5e' }, { start: 1500, end: 3000, color: '#f59e0b' }, { start: 3000, end: 7000, color: '#10b981' }, { start: 7000, end: 10000, color: '#f59e0b' }]
             },
             {
-              v: data.engine.coolantTemp, min: -50, max: 200, unit: '°C', label: 'Coolant Temp', color: '#f43f5e',
+              v: data.engine.coolantTemp, min: -50, max: 200, unit: '°C', label: 'Coolant Temp', color: '#f43f5e', reg: G.coolantTemp,
               zones: [{ start: -50, end: 10, color: '#3b82f6' }, { start: 10, end: 85, color: '#10b981' }, { start: 85, end: 110, color: '#f59e0b' }, { start: 110, end: 200, color: '#f43f5e' }]
             },
-            { v: data.engine.batteryVoltage, min: 0, max: 40, unit: 'V', label: 'Battery Voltage', color: '#8b5cf6', zones: null },
-          ].map((g, i) => (
-            <motion.div key={i} initial={{ opacity: 0, scale: 0.93 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.06 }}
+            { v: data.engine.batteryVoltage, min: 0, max: 40, unit: 'V', label: 'Battery Voltage', color: '#8b5cf6', zones: null, reg: G.batteryV },
+          ].filter(g => on(g.reg)).map((g, i) => (
+            <motion.div key={g.label} initial={{ opacity: 0, scale: 0.93 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.06 }}
               className="glass-card p-5 flex flex-col items-center">
               <GaugeChart value={g.v} min={g.min} max={g.max} unit={g.unit} label={g.label} color={g.color} size={140} alarmZones={g.zones} />
             </motion.div>
@@ -214,38 +276,48 @@ const Genset = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Runtime & Starts */}
-          <div className="glass-card p-5">
-            <p className="section-label mb-4">Engine Runtime & Starts</p>
-            <div className="flex justify-center gap-5 mb-4">
-              {[{ v: rt.d, l: 'Days' }, { v: rt.h, l: 'Hours' }, { v: rt.m, l: 'Mins' }].map(t => (
-                <div key={t.l} className="text-center">
-                  <p className="metric-value text-3xl" style={{ color: '#fbbf24' }}>{String(t.v).padStart(2, '0')}</p>
-                  <p className="unit-label text-[10px] uppercase tracking-wider mt-1">{t.l}</p>
+          {on(G.runTime, G.numberOfStarts) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-4">Engine Runtime & Starts</p>
+              {on(G.runTime) && (
+                <div className="flex justify-center gap-5 mb-4">
+                  {[{ v: rt.d, l: 'Days' }, { v: rt.h, l: 'Hours' }, { v: rt.m, l: 'Mins' }].map(t => (
+                    <div key={t.l} className="text-center">
+                      <p className="metric-value text-3xl" style={{ color: '#fbbf24' }}>{String(t.v).padStart(2, '0')}</p>
+                      <p className="unit-label text-[10px] uppercase tracking-wider mt-1">{t.l}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {on(G.numberOfStarts) && <PR label="Number of Starts" value={data.engine.numberOfStarts} unit="starts" color="#38bdf8" dp={0} />}
             </div>
-            <PR label="Number of Starts" value={data.engine.numberOfStarts} unit="starts" color="#38bdf8" dp={0} />
-          </div>
+          )}
 
           {/* Fuel Level progress */}
-          <div className="glass-card p-5">
-            <p className="section-label mb-4">Fuel Level</p>
-            <div className="flex items-end gap-3 mb-3">
-              <p className="metric-value text-5xl" style={{ color: data.engine.fuelLevel < 20 ? '#fb7185' : '#34d399' }}>
-                {fmt(data.engine.fuelLevel, 2)}
-              </p>
-              <p className="unit-label text-[10px] mb-2">%</p>
+          {on(G.fuelLevel, G.chargeAltV, G.batteryV, G.boostPressure) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-4">Fuel Level</p>
+              {on(G.fuelLevel) && (
+                <>
+                  <div className="flex items-end gap-3 mb-3">
+                    <p className="metric-value text-5xl" style={{ color: data.engine.fuelLevel < 20 ? '#fb7185' : '#34d399' }}>
+                      {fmt(data.engine.fuelLevel, 2)}
+                    </p>
+                    <p className="unit-label text-[10px] mb-2">%</p>
+                  </div>
+                  <div className="w-full h-4 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(26,35,64,0.8)' }}>
+                    <motion.div animate={{ width: `${data.engine.fuelLevel}%` }} transition={{ duration: 1, ease: 'easeOut' }}
+                      className="h-full rounded-full"
+                      style={{ background: data.engine.fuelLevel < 20 ? 'linear-gradient(90deg,#e11d48,#fb7185)' : data.engine.fuelLevel < 40 ? 'linear-gradient(90deg,#d97706,#fbbf24)' : 'linear-gradient(90deg,#059669,#34d399)' }}
+                    />
+                  </div>
+                </>
+              )}
+              {on(G.chargeAltV) && <PR label="Charge Alt. Voltage" value={data.engine.chargeAltVoltage} unit="V" color="#a78bfa" />}
+              {on(G.batteryV) && <PR label="Battery Voltage" value={data.engine.batteryVoltage} unit="V" color="#8b5cf6" />}
+              {on(G.boostPressure) && <PR label="Boost Pressure" value={data.engine.boostPressure} unit="bar" color="#38bdf8" />}
             </div>
-            <div className="w-full h-4 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(26,35,64,0.8)' }}>
-              <motion.div animate={{ width: `${data.engine.fuelLevel}%` }} transition={{ duration: 1, ease: 'easeOut' }}
-                className="h-full rounded-full"
-                style={{ background: data.engine.fuelLevel < 20 ? 'linear-gradient(90deg,#e11d48,#fb7185)' : data.engine.fuelLevel < 40 ? 'linear-gradient(90deg,#d97706,#fbbf24)' : 'linear-gradient(90deg,#059669,#34d399)' }}
-              />
-            </div>
-            <PR label="Charge Alt. Voltage" value={data.engine.chargeAltVoltage} unit="V" color="#a78bfa" />
-            <PR label="Battery Voltage" value={data.engine.batteryVoltage} unit="V" color="#8b5cf6" />
-            <PR label="Boost Pressure" value={data.engine.boostPressure} unit="bar" color="#38bdf8" />
-          </div>
+          )}
         </div>
 
         {/* Engine trends */}
@@ -264,110 +336,98 @@ const Genset = () => {
 
         {/* Voltage */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Generator Voltage — Phase to Neutral</p>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              {[['L1-N', data.generator.voltL1N], ['L2-N', data.generator.voltL2N], ['L3-N', data.generator.voltL3N]].map(([ph, v], i) => (
-                <div key={ph} className="text-center p-3 rounded-xl" style={{ background: ['rgba(99,102,241,0.08)', 'rgba(14,165,233,0.08)', 'rgba(6,182,212,0.08)'][i], border: `1px solid ${['rgba(99,102,241,0.15)', 'rgba(14,165,233,0.15)', 'rgba(6,182,212,0.15)'][i]}` }}>
-                  <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
-                  <p className="metric-value-sm" style={{ color: ['#818cf8', '#38bdf8', '#22d3ee'][i] }}>{fmt(v, 2)}</p>
-                  <p className="unit-label text-[10px]">V</p>
+          {on(G.voltL1N, G.voltL2N, G.voltL3N, G.voltL1L2, G.voltL2L3, G.voltL3L1, G.genFreq) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-3">{on(G.voltL1N, G.voltL2N, G.voltL3N) ? 'Generator Voltage — Phase to Neutral' : 'Generator Voltage'}</p>
+              {on(G.voltL1N, G.voltL2N, G.voltL3N) && (
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[['L1-N', data.generator.voltL1N, G.voltL1N, 0], ['L2-N', data.generator.voltL2N, G.voltL2N, 1], ['L3-N', data.generator.voltL3N, G.voltL3N, 2]]
+                    .filter(([, , reg]) => on(reg))
+                    .map(([ph, v, , i]) => (
+                      <div key={ph} className="text-center p-3 rounded-xl" style={{ background: ['rgba(99,102,241,0.08)', 'rgba(14,165,233,0.08)', 'rgba(6,182,212,0.08)'][i], border: `1px solid ${['rgba(99,102,241,0.15)', 'rgba(14,165,233,0.15)', 'rgba(6,182,212,0.15)'][i]}` }}>
+                        <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
+                        <p className="metric-value-sm" style={{ color: ['#818cf8', '#38bdf8', '#22d3ee'][i] }}>{fmt(v, 2)}</p>
+                        <p className="unit-label text-[10px]">V</p>
+                      </div>
+                    ))}
                 </div>
-              ))}
+              )}
+              {on(G.voltL1L2) && <PR label="L1-L2" value={data.generator.voltL1L2} unit="V" color="#818cf8" />}
+              {on(G.voltL2L3) && <PR label="L2-L3" value={data.generator.voltL2L3} unit="V" color="#38bdf8" />}
+              {on(G.voltL3L1) && <PR label="L3-L1" value={data.generator.voltL3L1} unit="V" color="#22d3ee" />}
+              {on(G.genFreq) && <PR label="Frequency" value={data.generator.frequency} unit="Hz" color="#34d399" />}
             </div>
-            <PR label="L1-L2" value={data.generator.voltL1L2} unit="V" color="#818cf8" />
-            <PR label="L2-L3" value={data.generator.voltL2L3} unit="V" color="#38bdf8" />
-            <PR label="L3-L1" value={data.generator.voltL3L1} unit="V" color="#22d3ee" />
-            <PR label="Frequency" value={data.generator.frequency} unit="Hz" color="#34d399" />
-          </div>
+          )}
 
           {/* Current */}
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Generator Current</p>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              {[['L1', data.generator.currentL1], ['L2', data.generator.currentL2], ['L3', data.generator.currentL3]].map(([ph, v], i) => (
-                <div key={ph} className="text-center p-3 rounded-xl" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)' }}>
-                  <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
-                  <p className="metric-value-sm" style={{ color: '#fbbf24' }}>{fmt(v, 2)}</p>
-                  <p className="unit-label text-[10px]">A</p>
+          {on(G.currentL1, G.currentL2, G.currentL3, G.currentE, G.currentLagLead) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-3">Generator Current</p>
+              {on(G.currentL1, G.currentL2, G.currentL3) && (
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[['L1', data.generator.currentL1, G.currentL1], ['L2', data.generator.currentL2, G.currentL2], ['L3', data.generator.currentL3, G.currentL3]]
+                    .filter(([, , reg]) => on(reg))
+                    .map(([ph, v]) => (
+                      <div key={ph} className="text-center p-3 rounded-xl" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)' }}>
+                        <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
+                        <p className="metric-value-sm" style={{ color: '#fbbf24' }}>{fmt(v, 2)}</p>
+                        <p className="unit-label text-[10px]">A</p>
+                      </div>
+                    ))}
                 </div>
-              ))}
+              )}
+              {on(G.currentE) && <PR label="Earth Current" value={data.generator.currentEarth} unit="A" color="#fb7185" />}
+              {on(G.currentLagLead) && <PR label="Current Lag/Lead" value={currentLagLeadDeg} unit="°" color="#818cf8" />}
             </div>
-            <PR label="Earth Current" value={data.generator.currentEarth} unit="A" color="#fb7185" />
-            <PR label="Current Lag/Lead" value={currentLagLeadDeg} unit="°" color="#818cf8" />
-          </div>
+          )}
         </div>
 
         {/* Power tables */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          {[
-            {
-              title: 'Active Power', unit: 'W', color: '#34d399', rows: [
-                ['L1', data.generator.wattsL1], ['L2', data.generator.wattsL2], ['L3', data.generator.wattsL3], ['Total', data.generator.totalWatts]
-              ]
-            },
-            {
-              title: 'Apparent Power', unit: 'VA', color: '#818cf8', rows: [
-                ['L1', data.generator.vaL1], ['L2', data.generator.vaL2], ['L3', data.generator.vaL3], ['Total', data.generator.totalVA]
-              ]
-            },
-            {
-              title: 'Reactive Power', unit: 'Var', color: '#a78bfa', rows: [
-                ['L1', data.generator.varL1], ['L2', data.generator.varL2], ['L3', data.generator.varL3], ['Total', data.generator.totalVar]
-              ]
-            },
-            {
-              title: 'Power Factor', unit: '', color: '#38bdf8', rows: [
-                ['PF L1', data.generator.pfL1], ['PF L2', data.generator.pfL2], ['PF L3', data.generator.pfL3], ['Avg PF', data.generator.avgPF]
-              ]
-            },
-          ].map(({ title, unit, color, rows }) => (
-            <div key={title} className="glass-card p-5">
-              <p className="section-label mb-3">{title}</p>
-              {rows.map(([lbl, val]) => (
-                <PR key={lbl} label={lbl} value={val} unit={unit} color={lbl === 'Total' || lbl === 'Avg PF' ? color : '#94a3b8'} />
-              ))}
-            </div>
-          ))}
-        </div>
+        {generatorPowerCards.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            {generatorPowerCards.map(({ title, unit, color, rows }) => (
+              <div key={title} className="glass-card p-5">
+                <p className="section-label mb-3">{title}</p>
+                {rows.map(([lbl, val]) => (
+                  <PR key={lbl} label={lbl} value={val} unit={unit} color={lbl === 'Total' || lbl === 'Avg PF' ? color : '#94a3b8'} />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <div className="glass-card p-5">
-            <p className="section-label mb-4">Generator Energy Accumulation</p>
-            <div className="grid grid-cols-2 gap-4">
-              {[
-
-                { lbl: 'Positive kWh', val: fmt(data.generator.positiveKWh, 2), unit: 'kWh', color: '#34d399' },
-                { lbl: 'Negative kWh', val: fmt(data.generator.negativeKWh, 2), unit: 'kWh', color: '#fb7185' },
-                { lbl: 'kVAh', val: fmt(data.generator.kVAh, 2), unit: 'kVAh', color: '#818cf8' },
-                { lbl: 'kVArh', val: fmt(data.generator.kVArh, 2), unit: 'kVArh', color: '#a78bfa' },
-              ].map(({ lbl, val, unit, color }) => (
-                <div key={lbl} className="p-4 rounded-xl text-center" style={{ background: `${color}10`, border: `1px solid ${color}20` }}>
-                  <p className="section-label mb-2">{lbl}</p>
-                  <p className="metric-value text-xl" style={{ color }}>{val}</p>
-                  <p className="unit-label text-[10px] mt-1">{unit}</p>
-                </div>
-              ))}
+          {energyItems.length > 0 && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-4">Generator Energy Accumulation</p>
+              <div className="grid grid-cols-2 gap-4">
+                {energyItems.map(({ lbl, val, unit, color }) => (
+                  <div key={lbl} className="p-4 rounded-xl text-center" style={{ background: `${color}10`, border: `1px solid ${color}20` }}>
+                    <p className="section-label mb-2">{lbl}</p>
+                    <p className="metric-value text-xl" style={{ color }}>{val}</p>
+                    <p className="unit-label text-[10px] mt-1">{unit}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="glass-card p-5">
-            <p className="section-label mb-4">Generator Load</p>
-            <div className="grid grid-cols-2 gap-4">
-              {[
-                { lbl: 'Full Power', val: '0.00', unit: '%', color: '#34d399' },
-                { lbl: 'Full Var', val: '0.0', unit: '%', color: '#a78bfa' },
-              ].map(({ lbl, val, unit, color }) => (
-                <div key={lbl} className="p-4 rounded-xl text-center" style={{ background: `${color}10`, border: `1px solid ${color}20` }}>
-                  <p className="section-label mb-2">{lbl}</p>
-                  <p className="metric-value text-xl" style={{ color }}>
-                    {val} {unit}
-                  </p>
-                  {/* <p className="unit-label text-[10px] mt-1">{unit}</p> */}
-                </div>
-              ))}
+          {loadItems.length > 0 && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-4">Generator Load</p>
+              <div className="grid grid-cols-2 gap-4">
+                {loadItems.map(({ lbl, val, unit, color }) => (
+                  <div key={lbl} className="p-4 rounded-xl text-center" style={{ background: `${color}10`, border: `1px solid ${color}20` }}>
+                    <p className="section-label mb-2">{lbl}</p>
+                    <p className="metric-value text-xl" style={{ color }}>
+                      {val} {unit}
+                    </p>
+                    {/* <p className="unit-label text-[10px] mt-1">{unit}</p> */}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -377,74 +437,65 @@ const Genset = () => {
       <div>
         <Sec title="Section C — Mains Supply" subtitle="Utility grid voltage, frequency, current and power measurements" color="#8b5cf6" icon={HiOutlineLightningBolt} />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Mains Voltages</p>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              {[['L1-N', data.mains.voltL1N], ['L2-N', data.mains.voltL2N], ['L3-N', data.mains.voltL3N]].map(([ph, v], i) => (
-                <div key={ph} className="text-center p-2.5 rounded-xl" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)' }}>
-                  <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
-                  <p className="metric-value-sm" style={{ color: '#a78bfa' }}>{fmt(v, 2)}</p>
-                  <p className="unit-label text-[10px]">V</p>
+          {on(G.mainsVoltL1N, G.mainsVoltL2N, G.mainsVoltL3N, G.mainsVoltL1L2, G.mainsVoltL2L3, G.mainsVoltL3L1, G.mainsVoltLagLead) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-3">Mains Voltages</p>
+              {on(G.mainsVoltL1N, G.mainsVoltL2N, G.mainsVoltL3N) && (
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[['L1-N', data.mains.voltL1N, G.mainsVoltL1N], ['L2-N', data.mains.voltL2N, G.mainsVoltL2N], ['L3-N', data.mains.voltL3N, G.mainsVoltL3N]]
+                    .filter(([, , reg]) => on(reg))
+                    .map(([ph, v]) => (
+                      <div key={ph} className="text-center p-2.5 rounded-xl" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                        <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
+                        <p className="metric-value-sm" style={{ color: '#a78bfa' }}>{fmt(v, 2)}</p>
+                        <p className="unit-label text-[10px]">V</p>
+                      </div>
+                    ))}
                 </div>
-              ))}
+              )}
+              {on(G.mainsVoltL1L2) && <PR label="L1-L2" value={data.mains.voltL1L2} unit="V" color="#a78bfa" />}
+              {on(G.mainsVoltL2L3) && <PR label="L2-L3" value={data.mains.voltL2L3} unit="V" color="#8b5cf6" />}
+              {on(G.mainsVoltL3L1) && <PR label="L3-L1" value={data.mains.voltL3L1} unit="V" color="#7c3aed" />}
+              {on(G.mainsVoltLagLead) && <PR label="Voltage Lead/Lag" value={0.0} unit="°" color="#c4b5fd" />}
             </div>
-            <PR label="L1-L2" value={data.mains.voltL1L2} unit="V" color="#a78bfa" />
-            <PR label="L2-L3" value={data.mains.voltL2L3} unit="V" color="#8b5cf6" />
-            <PR label="L3-L1" value={data.mains.voltL3L1} unit="V" color="#7c3aed" />
-            <PR label="Voltage Lead/Lag" value={0.0} unit="°" color="#c4b5fd" />
-          </div>
+          )}
 
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Mains Current</p>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              {[['L1', data.mains.currentL1], ['L2', data.mains.currentL2], ['L3', data.mains.currentL3]].map(([ph, v], i) => (
-                <div key={ph} className="text-center p-2.5 rounded-xl" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)' }}>
-                  <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
-                  <p className="metric-value-sm" style={{ color: '#a78bfa' }}>{fmt(v, 2)}</p>
-                  <p className="unit-label text-[10px]">A</p>
+          {on(G.mainsCurL1, G.mainsCurL2, G.mainsCurL3, G.mainsCurE, G.mainsCurLagLead, G.mainsFreq, G.mainsPhaseRotation) && (
+            <div className="glass-card p-5">
+              <p className="section-label mb-3">Mains Current</p>
+              {on(G.mainsCurL1, G.mainsCurL2, G.mainsCurL3) && (
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[['L1', data.mains.currentL1, G.mainsCurL1], ['L2', data.mains.currentL2, G.mainsCurL2], ['L3', data.mains.currentL3, G.mainsCurL3]]
+                    .filter(([, , reg]) => on(reg))
+                    .map(([ph, v]) => (
+                      <div key={ph} className="text-center p-2.5 rounded-xl" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                        <p className="text-xs font-semibold tracking-wide text-dark-300 mb-1">{ph}</p>
+                        <p className="metric-value-sm" style={{ color: '#a78bfa' }}>{fmt(v, 2)}</p>
+                        <p className="unit-label text-[10px]">A</p>
+                      </div>
+                    ))}
                 </div>
-              ))}
+              )}
+              {on(G.mainsCurE) && <PR label="Earth Current" value={0.0} unit="A" color="#fb7185" />}
+              {on(G.mainsCurLagLead) && <PR label="Current Lag/Lead" value={0.0} unit="°" color="#c4b5fd" />}
+              {on(G.mainsFreq) && <PR label="Frequency" value={data.mains.frequency} unit="Hz" color="#34d399" />}
+              {on(G.mainsPhaseRotation) && <PR label="Phase Rotation" value={data.mains.phaseRotation} unit="" color="#c4b5fd" />}
             </div>
-            <PR label="Earth Current" value={0.0} unit="A" color="#fb7185" />
-            <PR label="Current Lag/Lead" value={0.0} unit="°" color="#c4b5fd" />
-            <PR label="Frequency" value={data.mains.frequency} unit="Hz" color="#34d399" />
-            <PR label="Phase Rotation" value={data.mains.phaseRotation} unit="" color="#c4b5fd" />
-          </div>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Active Power</p>
-            <PR label="L1" value={data.mains.totalWatts / 1000} unit="kW" color="#34d399" />
-            <PR label="L2" value={data.mains.totalWatts / 1000} unit="kW" color="#34d399" />
-            <PR label="L3" value={data.mains.totalWatts / 1000} unit="kW" color="#34d399" />
-            <PR label="Total" value={data.mains.totalWatts / 1000} unit="kW" color="#34d399" />
+        {mainsPowerCards.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+            {mainsPowerCards.map(({ title, unit, color, rows }) => (
+              <div key={title} className="glass-card p-5">
+                <p className="section-label mb-3">{title}</p>
+                {rows.map(([lbl, val]) => (
+                  <PR key={lbl} label={lbl} value={val} unit={unit} color={color} />
+                ))}
+              </div>
+            ))}
           </div>
-
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Apparent Power</p>
-            <PR label="L1" value={data.mains.totalVA / 1000} unit="kVA" color="#818cf8" />
-            <PR label="L2" value={data.mains.totalVA / 1000} unit="kVA" color="#818cf8" />
-            <PR label="L3" value={data.mains.totalVA / 1000} unit="kVA" color="#818cf8" />
-            <PR label="Total" value={data.mains.totalVA / 1000} unit="kVA" color="#818cf8" />
-          </div>
-
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Reactive Power</p>
-            <PR label="L1" value={data.mains.totalVar / 1000} unit="kVar" color="#a78bfa" />
-            <PR label="L2" value={data.mains.totalVar / 1000} unit="kVar" color="#a78bfa" />
-            <PR label="L3" value={data.mains.totalVar / 1000} unit="kVar" color="#a78bfa" />
-            <PR label="Total" value={data.mains.totalVar / 1000} unit="kVar" color="#a78bfa" />
-          </div>
-
-          <div className="glass-card p-5">
-            <p className="section-label mb-3">Power Factor</p>
-            <PR label="L1" value={data.mains.avgPF} unit="" color="#38bdf8" />
-            <PR label="L2" value={data.mains.avgPF} unit="" color="#38bdf8" />
-            <PR label="L3" value={data.mains.avgPF} unit="" color="#38bdf8" />
-            <PR label="Avg" value={data.mains.avgPF} unit="" color="#38bdf8" />
-          </div>
-        </div>
+        )}
 
         {/* Mains health indicator */}
         <div className="glass-card mt-4 p-5">

@@ -53,7 +53,7 @@ function errorHandler(err, req, res, next) {
     success: false,
     message: statusCode >= 500 &&
       process.env.NODE_ENV === 'production' &&
-      !['SMTP_GREETING_TIMEOUT', 'SMTP_AUTH_FAILED'].includes(err.code)
+      !['SMTP_GREETING_TIMEOUT', 'SMTP_AUTH_FAILED', 'SMTP_NOT_CONFIGURED'].includes(err.code)
       ? 'An internal server error occurred'
       : message,
     timestamp: new Date().toISOString(),

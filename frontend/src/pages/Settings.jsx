@@ -140,7 +140,9 @@ const Settings = () => {
     try {
       const res = await getRegisterDefinitions();
       const rawData = Array.isArray(res) ? res : (res?.data || []);
-      const mapped = rawData.map((r) => {
+      // Inactive registers store no readings, so they are not offered for thresholds
+      const activeRegisters = rawData.filter((r) => r.Status == null || String(r.Status).trim().toLowerCase() === 'active');
+      const mapped = activeRegisters.map((r) => {
         const isGenset =
           r.DeviceId === 1 ||
           (r.DeviceName && r.DeviceName.toLowerCase().includes('amf')) ||

@@ -16,6 +16,7 @@ import {
   HiOutlineBell,
   HiOutlinePhone,
   HiOutlineMail,
+  HiOutlineSpeakerphone,
 } from 'react-icons/hi';
 import { TbEngine, TbChevronRight } from 'react-icons/tb';
 import { MdOutlineElectricMeter } from 'react-icons/md';
@@ -29,6 +30,7 @@ const navItems = [
   { path: '/genset', label: 'Genset', icon: TbEngine, accent: '#f59e0b' },
   { path: '/dpm', label: 'DPM', icon: MdOutlineElectricMeter, accent: '#0ea5e9' },
   { path: '/settings', label: 'Settings', icon: HiOutlineCog, accent: '#10b981' },
+  { path: '/recipients', label: 'Alert Recipients', icon: HiOutlineSpeakerphone, accent: '#06b6d4' },
   { path: '/users', label: 'Users', icon: HiOutlineUserGroup, accent: '#8b5cf6' },
 ];
 
@@ -37,6 +39,7 @@ const pageTitles = {
   '/genset': { title: 'Genset Controller', subtitle: 'DSE7320 MKII — Engine, Generator & Mains' },
   '/dpm': { title: 'Digital Power Meter', subtitle: 'ME631 — Register groups per Modbus manual' },
   '/settings': { title: 'Settings', subtitle: 'System configuration & threshold alerts' },
+  '/recipients': { title: 'Alert Recipients', subtitle: 'Who receives Email and SMS alerts' },
   '/users': { title: 'User Management', subtitle: 'Access control and user accounts' },
   '/profile': { title: 'User Profile', subtitle: 'Manage your account details and security credentials' },
 };

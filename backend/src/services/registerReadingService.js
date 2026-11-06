@@ -4,8 +4,34 @@ const registerReadingModel = require('../models/registerReadingModel');
 const registerDefinitionModel = require('../models/registerDefinitionModel');
 const deviceModel = require('../models/deviceModel');
 const thresholdMonitorService = require('./thresholdMonitorService');
-const { NotFoundError } = require('../utils/errors');
+const { NotFoundError, ValidationError } = require('../utils/errors');
 const { logger } = require('../utils/logger');
+const { normalizeGroup, tableForGroup, isActiveStatus } = require('../utils/readingTables');
+const { createShortCache } = require('../utils/shortCache');
+
+// The Dashboard, Genset and DPM pages refresh every second: share one database query per second
+const liveCache = createShortCache(1000);
+
+/**
+ * Convert a DB row (RegisterDefinitions LEFT JOIN latest reading) into the API register object.
+ * Inactive registers keep their definition but never show a value.
+ */
+const toRegisterReading = (row) => {
+  const active = isActiveStatus(row.Status);
+  return {
+    readingId:    active ? (row.ReadingId ?? null) : null,
+    registerId:   row.RegisterId,
+    registerName: row.RegisterName,
+    rawValue:     active && row.RawValue    != null ? String(row.RawValue)    : null,
+    scaledValue:  active && row.ScaledValue != null ? String(row.ScaledValue) : null,
+    unit:         row.Unit         ?? null,
+    dataType:     row.DataType     ?? null,
+    action:       row.Action       ?? null,
+    group:        normalizeGroup(row.Group) || null,
+    status:       row.Status       ?? null,
+    recordedAt:   active ? (row.RecordedAt ?? null) : null,
+  };
+};
 
 class RegisterReadingService {
   /**
@@ -25,10 +51,10 @@ class RegisterReadingService {
   }
 
   /**
-   * Get reading by ID
+   * Get reading by ID. Reading IDs are per group table, so the group is needed (default DPM).
    */
-  async getReadingById(readingId) {
-    const reading = await registerReadingModel.findById(readingId);
+  async getReadingById(readingId, group = 'DPM') {
+    const reading = await registerReadingModel.findById(readingId, group);
     if (!reading) throw new NotFoundError('Reading');
     return reading;
   }
@@ -39,6 +65,10 @@ class RegisterReadingService {
    * readings yet are still returned with null reading fields.
    */
   async getByDevice(deviceId) {
+    return liveCache(`device:${deviceId}`, () => this._loadByDevice(deviceId));
+  }
+
+  async _loadByDevice(deviceId) {
     const device = await deviceModel.findById(deviceId);
     if (!device) throw new NotFoundError('Device');
 
@@ -47,17 +77,7 @@ class RegisterReadingService {
       deviceId: device.DeviceId,
       deviceName: device.DeviceName,
       deviceModel: device.DeviceModel,
-      registers: rows.map(row => ({
-        readingId:    row.ReadingId    ?? null,
-        registerId:   row.RegisterId,
-        registerName: row.RegisterName,
-        rawValue:     row.RawValue     != null ? String(row.RawValue)    : null,
-        scaledValue:  row.ScaledValue  != null ? String(row.ScaledValue) : null,
-        unit:         row.Unit         ?? null,
-        dataType:     row.DataType     ?? null,
-        action:       row.Action       ?? null,
-        recordedAt:   row.RecordedAt   ?? null,
-      })),
+      registers: rows.map(toRegisterReading),
     };
   }
 
@@ -84,6 +104,10 @@ class RegisterReadingService {
    * Get power trends (PTotal, STotal, FQTotal) for a device over a timeRange (up to 30d / 1 month)
    */
   async getDevicePowerTrends(deviceId, timeRange = '30d') {
+    return liveCache(`trends:${deviceId}:${timeRange}`, () => this._loadDevicePowerTrends(deviceId, timeRange));
+  }
+
+  async _loadDevicePowerTrends(deviceId, timeRange) {
     const device = await deviceModel.findById(deviceId);
     if (!device) throw new NotFoundError('Device');
     const result = await registerReadingModel.getPowerTrendsByDevice(deviceId, timeRange);
@@ -147,28 +171,16 @@ class RegisterReadingService {
   /**
    * Get dashboard — uses RegisterDefinitions as the master list of applicable registers.
    * Only includes registers currently displayed in the Genset Summary and DPM/ME631 Summary
-   * dashboard panels. For each register, returns the latest reading from RegisterReadings,
-   * or null values when no reading exists yet.
+   * dashboard panels. For each register, returns the latest reading from the readings table
+   * of its group, or null values when no reading exists yet (or the register is inactive).
    */
   async getDashboard() {
+    return liveCache('dashboard', () => this._loadDashboard());
+  }
+
+  async _loadDashboard() {
     const { rows, GENSET_REGISTER_NAMES, DPM_REGISTER_NAMES } = await registerReadingModel.getDashboardRegisters();
     const totalCount = await registerReadingModel.getTotalCount();
-
-    /**
-     * Convert a DB row into the standard register reading response object.
-     * Scalars from the LEFT JOIN will be null when no reading exists.
-     */
-    const toReading = (row) => ({
-      readingId:    row.ReadingId    ?? null,
-      registerId:   row.RegisterId,
-      registerName: row.RegisterName,
-      rawValue:     row.RawValue     != null ? String(row.RawValue)    : null,
-      scaledValue:  row.ScaledValue  != null ? String(row.ScaledValue) : null,
-      unit:         row.Unit         ?? null,
-      dataType:     row.DataType     ?? null,
-      action:       row.Action       ?? null,
-      recordedAt:   row.RecordedAt   ?? null,
-    });
 
     // Build a lookup: RegisterName → reading row (first match wins — names should be unique per device)
     const byName = {};
@@ -214,11 +226,11 @@ class RegisterReadingService {
     return {
       genset: {
         ...(deviceInfoFrom(gensetUniqueRows) || {}),
-        registers: gensetUniqueRows.map(toReading),
+        registers: gensetUniqueRows.map(toRegisterReading),
       },
       dpm: {
         ...(deviceInfoFrom(dpmUniqueRows) || {}),
-        registers: dpmUniqueRows.map(toReading),
+        registers: dpmUniqueRows.map(toRegisterReading),
       },
       totalReadings: totalCount,
       generatedAt:   new Date().toISOString(),
@@ -226,32 +238,48 @@ class RegisterReadingService {
   }
 
   /**
-   * Create a single reading
+   * Create a single reading. Only Active registers are stored, in the table of their group.
    */
   async createReading(data, userId) {
     const register = await registerDefinitionModel.findById(data.registerId);
     if (!register) throw new NotFoundError('Register definition');
+    if (!isActiveStatus(register.Status)) {
+      throw new ValidationError(`Register ${register.RegisterId} is not Active; only Active registers store readings`);
+    }
 
-    const reading = await registerReadingModel.create(data);
+    const table = tableForGroup(register.Group);
+    if (!table) {
+      throw new ValidationError(`Register ${register.RegisterId} has group '${normalizeGroup(register.Group)}' which has no readings table`);
+    }
+
+    const reading = await registerReadingModel.create(data, table);
     await this._processThresholds([data], userId);
     return reading;
   }
 
   /**
-   * Bulk create readings (from Modbus polling)
+   * Bulk create readings (from Modbus polling).
+   * Readings of registers that are not Active (or whose group has no table) are skipped.
    */
   async bulkCreateReadings(readings, userId) {
-    // Validate all register IDs exist
+    // Validate all register IDs exist and find the table of each
     const registerIds = [...new Set(readings.map(r => r.registerId))];
+    const tableByRegister = new Map();
     for (const regId of registerIds) {
       const reg = await registerDefinitionModel.findById(regId);
       if (!reg) throw new NotFoundError(`Register definition with ID ${regId}`);
+      if (isActiveStatus(reg.Status)) tableByRegister.set(regId, tableForGroup(reg.Group));
     }
 
-    const count = await registerReadingModel.bulkCreate(readings);
-    await this._processThresholds(readings, userId);
-    logger.info(`Bulk inserted ${count} readings`);
-    return { insertedCount: count };
+    const toStore = readings
+      .filter(r => tableByRegister.get(r.registerId))
+      .map(r => ({ ...r, table: tableByRegister.get(r.registerId) }));
+
+    const count = await registerReadingModel.bulkCreate(toStore);
+    await this._processThresholds(toStore, userId);
+    const skippedCount = readings.length - toStore.length;
+    logger.info(`Bulk inserted ${count} readings` + (skippedCount > 0 ? `, skipped ${skippedCount} of inactive registers` : ''));
+    return { insertedCount: count, skippedCount };
   }
 
   async _processThresholds(readings, userId) {
@@ -267,11 +295,11 @@ class RegisterReadingService {
   /**
    * Delete a reading
    */
-  async deleteReading(readingId) {
-    const reading = await registerReadingModel.findById(readingId);
+  async deleteReading(readingId, group = 'DPM') {
+    const reading = await registerReadingModel.findById(readingId, group);
     if (!reading) throw new NotFoundError('Reading');
 
-    await registerReadingModel.delete(readingId);
+    await registerReadingModel.delete(readingId, group);
     return true;
   }
 

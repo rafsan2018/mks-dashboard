@@ -56,6 +56,30 @@ describe('EmailService', () => {
     expect(message.text).toContain('Timestamp: 2026-10-29T10:00:00.000Z');
   });
 
+  test('builds the alert subject and HTML from the templates, escaping values', async () => {
+    const transport = {
+      sendMail: jest.fn().mockResolvedValue({ messageId: 'message-2' }),
+    };
+    nodemailer.createTransport.mockReturnValue(transport);
+
+    await emailService.sendThresholdNotification({
+      recipient: 'operator@example.com',
+      threshold: { Severity: 'Critical', ThresholdId: 7, RegisterName: 'Tank <b>Level</b>', MinValue: null, MaxValue: 90, Unit: '%' },
+      currentValue: 95,
+      warning: 'Above maximum',
+      recordedAt: '2026-10-29T10:00:00.000Z',
+    });
+
+    const message = transport.sendMail.mock.calls[0][0];
+    expect(message.subject).toBe('[Critical] Threshold alert: Tank <b>Level</b> (#7)');
+    expect(message.html).toContain('Tank &lt;b&gt;Level&lt;/b&gt; is out of range');
+    expect(message.html).not.toContain('<b>Level</b>');
+    expect(message.html).toContain('Modbus Monitor');          // from layout.html
+    expect(message.html).toContain('#b42318');                 // Critical colour
+    expect(message.text).toContain('Minimum Value: Not configured %');
+    expect(message.text).not.toContain('Subject:');
+  });
+
   test('sends a test message to the supplied profile recipient', async () => {
     const transport = {
       sendMail: jest.fn().mockResolvedValue({ messageId: 'test-message-1' }),
@@ -83,6 +107,18 @@ describe('EmailService', () => {
     expect(nodemailer.createTransport).toHaveBeenLastCalledWith(expect.objectContaining({
       port: 465,
       secure: true,
+    }));
+  });
+
+  test('explains where to configure SMTP when nothing is set', async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASSWORD;
+
+    expect(() => emailService._createTransporter()).toThrow(expect.objectContaining({
+      statusCode: 503,
+      code: 'SMTP_NOT_CONFIGURED',
+      message: expect.stringContaining('src/config/email.js'),
     }));
   });
 

@@ -80,6 +80,12 @@ const readingQueryValidator = [
 const readingIdValidator = [
   param('id')
     .isInt({ min: 1 }).withMessage('Reading ID must be a positive integer'),
+
+  // Reading IDs are per group table (DPM, Engine Parameters, Generator Parameters, Mains Parameters)
+  query('group')
+    .optional()
+    .isString().withMessage('Group must be a string')
+    .isLength({ max: 100 }).withMessage('Group must be at most 100 characters'),
 ];
 
 module.exports = {

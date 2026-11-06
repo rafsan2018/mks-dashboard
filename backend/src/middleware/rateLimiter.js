@@ -3,12 +3,16 @@
 const rateLimit = require('express-rate-limit');
 const { logger } = require('../utils/logger');
 
+// Live data the Dashboard, Genset and DPM pages refresh every second (cached for 1 s in the service)
+const LIVE_READINGS_PATH = /\/readings\/(dashboard|device\/\d+(\/power-trends)?)\/?$/;
+
 /**
- * Global rate limiter - applies to all API routes
+ * Global rate limiter - applies to all API routes except the live readings refreshed every second
  */
 const globalRateLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+  skip: (req) => req.method === 'GET' && LIVE_READINGS_PATH.test(req.path),
   standardHeaders: true,
   legacyHeaders: false,
   message: {

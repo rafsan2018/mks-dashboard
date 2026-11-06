@@ -15,7 +15,7 @@ class RegisterReadingController {
 
   async getReadingById(req, res, next) {
     try {
-      const reading = await registerReadingService.getReadingById(parseInt(req.params.id));
+      const reading = await registerReadingService.getReadingById(parseInt(req.params.id), req.query.group);
       return successResponse(res, reading, 'Reading retrieved successfully');
     } catch (error) {
       next(error);
@@ -110,7 +110,7 @@ class RegisterReadingController {
 
   async deleteReading(req, res, next) {
     try {
-      await registerReadingService.deleteReading(parseInt(req.params.id));
+      await registerReadingService.deleteReading(parseInt(req.params.id), req.query.group);
       return noContentResponse(res);
     } catch (error) {
       next(error);

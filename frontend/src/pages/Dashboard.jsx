@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   HiOutlineLightningBolt, HiOutlineChartBar, HiOutlineExclamationCircle,
@@ -11,10 +11,9 @@ import GaugeChart from '../components/GaugeChart';
 import AlarmChip from '../components/AlarmChip';
 import { TrendChart, EnergyBarChart, MultiLineChart } from '../components/Charts';
 import { ALARM_LABELS } from '../constants/alarmConstants';
-import { fetchDashboard, createInitialDashboardData } from '../api/dashboardService';
-
-/* ── Poll interval (ms) — how often to refresh live data from the API ── */
-const POLL_INTERVAL = 30000;
+import { fetchDashboard, createInitialDashboardData, G, D } from '../api/dashboardService';
+import { isShown } from '../api/deviceReadingService';
+import usePolling from '../hooks/usePolling';
 
 /* ── helpers ── */
 const fmt = (v, dp = 2) => {
@@ -42,8 +41,8 @@ const SysCard = ({ label, value, sub, icon: Icon, color, delay }) => (
   </motion.div>
 );
 
-/* ── Genset device card ── */
-const GensetCard = ({ data }) => {
+/* ── Genset device card ── (on = is the register Active) */
+const GensetCard = ({ data, on }) => {
   const alarmCount = Object.values(data.alarms).filter(v => v > 1).length;
   const modeColor = { Auto: '#34d399', Manual: '#fbbf24', Test: '#818cf8', Stop: '#fb7185' }[data.engineMode] || '#94a3b8';
 
@@ -64,13 +63,13 @@ const GensetCard = ({ data }) => {
       </div>
       <div className="grid grid-cols-2 gap-2">
         {[
-          { lbl: 'Engine Speed', val: `${fmt(data.engine.speed, 2)} RPM`, color: '#fbbf24' },
-          { lbl: 'Load', val: `${fmt(data.loadPercent, 2)} %`, color: '#818cf8' },
-          { lbl: 'Coolant Temp', val: `${fmt(data.engine.coolantTemp, 2)} °C`, color: '#f43f5e' },
-          { lbl: 'Oil Pressure', val: `${fmt(data.engine.oilPressure, 2)} kPa`, color: '#34d399' },
-          { lbl: 'Fuel Level', val: `${fmt(data.engine.fuelLevel, 2)} %`, color: data.engine.fuelLevel < 20 ? '#fb7185' : '#34d399' },
-          { lbl: 'Battery', val: `${fmt(data.engine.batteryVoltage, 2)} V`, color: '#a78bfa' },
-        ].map(({ lbl, val, color }) => (
+          { lbl: 'Engine Speed', val: `${fmt(data.engine.speed, 2)} RPM`, color: '#fbbf24', reg: G.engineSpeed },
+          { lbl: 'Load', val: `${fmt(data.loadPercent, 2)} %`, color: '#818cf8', reg: G.loadPercent },
+          { lbl: 'Coolant Temp', val: `${fmt(data.engine.coolantTemp, 2)} °C`, color: '#f43f5e', reg: G.coolantTemp },
+          { lbl: 'Oil Pressure', val: `${fmt(data.engine.oilPressure, 2)} kPa`, color: '#34d399', reg: G.oilPressure },
+          { lbl: 'Fuel Level', val: `${fmt(data.engine.fuelLevel, 2)} %`, color: data.engine.fuelLevel < 20 ? '#fb7185' : '#34d399', reg: G.fuelLevel },
+          { lbl: 'Battery', val: `${fmt(data.engine.batteryVoltage, 2)} V`, color: '#a78bfa', reg: G.batteryV },
+        ].filter(({ reg }) => on(reg)).map(({ lbl, val, color }) => (
           <div key={lbl} className="p-2.5 rounded-xl" style={{ background: 'rgba(26,35,64,0.5)' }}>
             <p className="section-label mb-0.5">{lbl}</p>
             <p className="text-sm font-bold font-mono" style={{ color }}>{val}</p>
@@ -122,11 +121,11 @@ const Dashboard = () => {
   const [error, setError] = useState(null);   // non-null when API unreachable
 
   // ── API fetch helper ───────────────────────────────────────────
-  const loadDashboard = useCallback(async () => {
+  const loadDashboard = useCallback(async ({ background } = {}) => {
     try {
       // Pass the current `ov` snapshot as the mock-fallback so any register
       // not yet in the DB keeps its last good / generated value.
-      const normalised = await fetchDashboard(ov);
+      const normalised = await fetchDashboard(ov, { background });
       setOv(normalised);
       setError(null);
     } catch (err) {
@@ -139,14 +138,13 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);   // no dep on `ov` — we read it via closure only for the initial fallback
 
-  // ── Poll on mount + every POLL_INTERVAL ms ─────────────────────
-  useEffect(() => {
-    loadDashboard();                                         // immediate first fetch
-    const id = setInterval(loadDashboard, POLL_INTERVAL);
-    return () => clearInterval(id);
-  }, [loadDashboard]);
+  // ── Load on mount, then refresh every POLL_INTERVAL ms ─────────
+  usePolling(loadDashboard);
 
   const { genset, dpm } = ov;
+
+  // Widgets of registers with Status <> 'Active' are not shown
+  const on = (...names) => isShown(ov.inactive, ...names);
 
   // ── Dynamic live trends derived from real device readings ──────────
   const multiTrend = useMemo(() => {
@@ -211,27 +209,31 @@ const Dashboard = () => {
         <Sec title="Genset Summary" subtitle="DSE7320 MKII — key engine & generator parameters" color="#f59e0b" icon={TbEngine} />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Genset device card */}
-          <GensetCard data={genset} />
+          <GensetCard data={genset} on={on} />
 
           {/* Generator output */}
           <div className="glass-card p-4 sm:p-5">
             <p className="section-label mb-4">Generator Output</p>
-            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">
-              {[['L1', genset.generator.voltL1N], ['L2', genset.generator.voltL2N], ['L3', genset.generator.voltL3N]].map(([ph, v]) => (
-                <div key={ph} className="text-center p-2 sm:p-3 rounded-xl" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)' }}>
-                  <p className="section-label mb-1">{ph}-N</p>
-                  <p className="metric-value-sm text-sm sm:text-base" style={{ color: '#fbbf24' }}>{fmt(v, 2)}</p>
-                  <p className="text-[10px] text-dark-100">V</p>
-                </div>
-              ))}
-            </div>
+            {on(G.voltL1N, G.voltL2N, G.voltL3N) && (
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">
+                {[['L1', genset.generator.voltL1N, G.voltL1N], ['L2', genset.generator.voltL2N, G.voltL2N], ['L3', genset.generator.voltL3N, G.voltL3N]]
+                  .filter(([, , reg]) => on(reg))
+                  .map(([ph, v]) => (
+                    <div key={ph} className="text-center p-2 sm:p-3 rounded-xl" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)' }}>
+                      <p className="section-label mb-1">{ph}-N</p>
+                      <p className="metric-value-sm text-sm sm:text-base" style={{ color: '#fbbf24' }}>{fmt(v, 2)}</p>
+                      <p className="text-[10px] text-dark-100">V</p>
+                    </div>
+                  ))}
+              </div>
+            )}
             {[
-              { lbl: 'Generator Frequency', val: `${fmt(genset.generator.frequency, 2)} Hz`, color: '#34d399' },
-              { lbl: 'Total Output Power', val: `${fmt(genset.generator.totalWatts / 1000, 2)} kW`, color: '#fbbf24' },
-              { lbl: 'Average Power Factor', val: fmt(genset.generator.avgPF), color: '#818cf8' },
-              { lbl: 'Mains Frequency', val: `${fmt(genset.mains.frequency, 2)} Hz`, color: '#38bdf8' },
-              { lbl: 'Mains L1-N', val: `${fmt(genset.mains.voltL1N, 2)} V`, color: '#38bdf8' },
-            ].map(({ lbl, val, color }) => (
+              { lbl: 'Generator Frequency', val: `${fmt(genset.generator.frequency, 2)} Hz`, color: '#34d399', reg: G.genFreq },
+              { lbl: 'Total Output Power', val: `${fmt(genset.generator.totalWatts / 1000, 2)} kW`, color: '#fbbf24', reg: G.totalWatts },
+              { lbl: 'Average Power Factor', val: fmt(genset.generator.avgPF), color: '#818cf8', reg: G.avgPF },
+              { lbl: 'Mains Frequency', val: `${fmt(genset.mains.frequency, 2)} Hz`, color: '#38bdf8', reg: G.mainsFreq },
+              { lbl: 'Mains L1-N', val: `${fmt(genset.mains.voltL1N, 2)} V`, color: '#38bdf8', reg: G.mainsVoltL1N },
+            ].filter(({ reg }) => on(reg)).map(({ lbl, val, color }) => (
               <div key={lbl} className="param-row">
                 <span className="param-label">{lbl}</span>
                 <span className="param-value" style={{ color }}>{val}</span>
@@ -243,34 +245,46 @@ const Dashboard = () => {
           <div className="glass-card p-4 sm:p-5">
             <p className="section-label mb-4">Engine Sensors</p>
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              <div className="flex flex-col items-center">
-                <GaugeChart value={genset.engine.oilPressure} min={0} max={10000} unit="kPa" label="Oil Pressure" color="#10b981" size={110}
-                  alarmZones={[{ start: 0, end: 1500, color: '#f43f5e' }, { start: 1500, end: 3000, color: '#f59e0b' }, { start: 3000, end: 7000, color: '#10b981' }, { start: 7000, end: 10000, color: '#f59e0b' }]} />
-              </div>
-              <div className="flex flex-col items-center">
-                <GaugeChart value={genset.engine.coolantTemp} min={-50} max={200} unit="°C" label="Coolant Temp" color="#f43f5e" size={110}
-                  alarmZones={[{ start: -50, end: 10, color: '#3b82f6' }, { start: 10, end: 85, color: '#10b981' }, { start: 85, end: 110, color: '#f59e0b' }, { start: 110, end: 200, color: '#f43f5e' }]} />
-              </div>
-              <div className="flex flex-col items-center">
-                <GaugeChart value={genset.engine.speed} min={0} max={3000} unit="RPM" label="Engine Speed" color="#f59e0b" size={110} />
-              </div>
-              <div className="flex flex-col items-center col-span-1 justify-center">
-                {/* Fuel level bar */}
-                <p className="section-label mb-1">Fuel Level</p>
-                <p className="metric-value text-xl sm:text-2xl mb-1.5" style={{ color: genset.engine.fuelLevel < 20 ? '#fb7185' : '#34d399' }}>
-                  {fmt(genset.engine.fuelLevel, 2)}%
-                </p>
-                <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(26,35,64,0.8)' }}>
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${genset.engine.fuelLevel}%` }}
-                    transition={{ duration: 1, ease: 'easeOut' }}
-                    className="h-full rounded-full"
-                    style={{ background: genset.engine.fuelLevel < 20 ? 'linear-gradient(90deg,#f43f5e,#fb7185)' : 'linear-gradient(90deg,#10b981,#34d399)' }}
-                  />
+              {on(G.oilPressure) && (
+                <div className="flex flex-col items-center">
+                  <GaugeChart value={genset.engine.oilPressure} min={0} max={10000} unit="kPa" label="Oil Pressure" color="#10b981" size={110}
+                    alarmZones={[{ start: 0, end: 1500, color: '#f43f5e' }, { start: 1500, end: 3000, color: '#f59e0b' }, { start: 3000, end: 7000, color: '#10b981' }, { start: 7000, end: 10000, color: '#f59e0b' }]} />
                 </div>
-                <p className="section-label mt-2 text-[10px]">Battery: {fmt(genset.engine.batteryVoltage)} V</p>
-              </div>
+              )}
+              {on(G.coolantTemp) && (
+                <div className="flex flex-col items-center">
+                  <GaugeChart value={genset.engine.coolantTemp} min={-50} max={200} unit="°C" label="Coolant Temp" color="#f43f5e" size={110}
+                    alarmZones={[{ start: -50, end: 10, color: '#3b82f6' }, { start: 10, end: 85, color: '#10b981' }, { start: 85, end: 110, color: '#f59e0b' }, { start: 110, end: 200, color: '#f43f5e' }]} />
+                </div>
+              )}
+              {on(G.engineSpeed) && (
+                <div className="flex flex-col items-center">
+                  <GaugeChart value={genset.engine.speed} min={0} max={3000} unit="RPM" label="Engine Speed" color="#f59e0b" size={110} />
+                </div>
+              )}
+              {on(G.fuelLevel, G.batteryV) && (
+                <div className="flex flex-col items-center col-span-1 justify-center">
+                  {on(G.fuelLevel) && (
+                    <>
+                      {/* Fuel level bar */}
+                      <p className="section-label mb-1">Fuel Level</p>
+                      <p className="metric-value text-xl sm:text-2xl mb-1.5" style={{ color: genset.engine.fuelLevel < 20 ? '#fb7185' : '#34d399' }}>
+                        {fmt(genset.engine.fuelLevel, 2)}%
+                      </p>
+                      <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(26,35,64,0.8)' }}>
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${genset.engine.fuelLevel}%` }}
+                          transition={{ duration: 1, ease: 'easeOut' }}
+                          className="h-full rounded-full"
+                          style={{ background: genset.engine.fuelLevel < 20 ? 'linear-gradient(90deg,#f43f5e,#fb7185)' : 'linear-gradient(90deg,#10b981,#34d399)' }}
+                        />
+                      </div>
+                    </>
+                  )}
+                  {on(G.batteryV) && <p className="section-label mt-2 text-[10px]">Battery: {fmt(genset.engine.batteryVoltage)} V</p>}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -282,19 +296,19 @@ const Dashboard = () => {
       <div>
           <Sec title="Power" subtitle="Active, apparent, demand, and factor measurements" color="#fbbf24" icon={TbGauge} />
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">
-          <DpmKpi label="Total Active Power" value={dpm.summary.totalActivePower} unit="kW" color="#fbbf24" icon={HiOutlineLightningBolt} />
-          <DpmKpi label="Apparent Power" value={dpm.summary.totalApparentPower} unit="kVA" color="#a78bfa" icon={TbGauge} />
-          <DpmKpi label="Peak Demand" value={dpm.summary.peakDemand} unit="kW" color="#fb7185" />
-          <DpmKpi label="Avg Power Factor" value={dpm.summary.avgPowerFactor} unit="" color="#818cf8" icon={TbGauge} />
+          {on(D.totalActivePower) && <DpmKpi label="Total Active Power" value={dpm.summary.totalActivePower} unit="kW" color="#fbbf24" icon={HiOutlineLightningBolt} />}
+          {on(D.totalApparent) && <DpmKpi label="Apparent Power" value={dpm.summary.totalApparentPower} unit="kVA" color="#a78bfa" icon={TbGauge} />}
+          {on(D.peakDemand) && <DpmKpi label="Peak Demand" value={dpm.summary.peakDemand} unit="kW" color="#fb7185" />}
+          {on(D.avgPF) && <DpmKpi label="Avg Power Factor" value={dpm.summary.avgPowerFactor} unit="" color="#818cf8" icon={TbGauge} />}
         </div>
-        
+
         <Sec title="Voltage / Current" subtitle="Average electrical measurements and power quality" color="#0ea5e9" icon={MdOutlineElectricMeter} />
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-          <DpmKpi label="Avg Voltage" value={dpm.summary.avgVoltage} unit="V" color="#818cf8" icon={TbBolt} />
-          <DpmKpi label="Avg Current" value={dpm.summary.avgCurrent} unit="A" color="#38bdf8" icon={TbBolt} />
-          <DpmKpi label="Avg Voltage THD" value={dpm.summary.avgVoltageTHD} unit="%" color={dpm.summary.avgVoltageTHD > 5 ? '#fb7185' : '#34d399'} />
-          <DpmKpi label="Avg Current THD" value={dpm.summary.avgCurrentTHD} unit="%" color={dpm.summary.avgCurrentTHD > 8 ? '#fb7185' : '#fbbf24'} />
-          <DpmKpi label="Avg Frequency" value={dpm.summary.avgFrequency} unit="Hz" color="#34d399" icon={MdOutlineSpeed} />
+          {on(D.avgVoltage) && <DpmKpi label="Avg Voltage" value={dpm.summary.avgVoltage} unit="V" color="#818cf8" icon={TbBolt} />}
+          {on(D.avgCurrent) && <DpmKpi label="Avg Current" value={dpm.summary.avgCurrent} unit="A" color="#38bdf8" icon={TbBolt} />}
+          {on(D.voltageTHD) && <DpmKpi label="Avg Voltage THD" value={dpm.summary.avgVoltageTHD} unit="%" color={dpm.summary.avgVoltageTHD > 5 ? '#fb7185' : '#34d399'} />}
+          {on(D.currentTHD) && <DpmKpi label="Avg Current THD" value={dpm.summary.avgCurrentTHD} unit="%" color={dpm.summary.avgCurrentTHD > 8 ? '#fb7185' : '#fbbf24'} />}
+          {on(D.avgFrequency) && <DpmKpi label="Avg Frequency" value={dpm.summary.avgFrequency} unit="Hz" color="#34d399" icon={MdOutlineSpeed} />}
         </div>
 
 
@@ -308,8 +322,8 @@ const Dashboard = () => {
                 <h3 className="text-sm font-bold text-white">Energy</h3>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <DpmKpi label="Imported Energy" value={(dpm.summary.importedEnergy / 1000).toFixed(1)} unit="MWh" color="#34d399" />
-                <DpmKpi label="Exported Energy" value={(dpm.summary.exportedEnergy / 1000).toFixed(2)} unit="MWh" color="#f59e0b" />
+                {on(D.importedEnergy) && <DpmKpi label="Imported Energy" value={(dpm.summary.importedEnergy / 1000).toFixed(1)} unit="MWh" color="#34d399" />}
+                {on(D.exportedEnergy) && <DpmKpi label="Exported Energy" value={(dpm.summary.exportedEnergy / 1000).toFixed(2)} unit="MWh" color="#f59e0b" />}
               </div>
             </div>
 
